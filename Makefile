@@ -102,7 +102,7 @@ ci-release:
 	@echo "Building Multipass release artifacts"
 	shipkit install --force goreleaser
 	shipkit release-goreleaser --skip-docker --clean
-	shipkit release-docker
+	shipkit release-docker --image "$(DOCKER_IMAGE)" --platform "$(DOCKER_PLATFORMS)" --readme README.md --update-readme
 
 ci-summary:
 	@echo "Multipass release complete"
