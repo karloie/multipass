@@ -21,11 +21,11 @@ permissions:
 
 jobs:
   ci:
-    uses: karloie/shipkit/.github/workflows/release.yml@v0.0.77
+    uses: karloie/shipkit/.github/workflows/release.yml@v0.0.78
     with:
       mode: release
       event_name: ${{ github.event_name }}
-      tool_ref: v0.0.77
+      tool_ref: v0.0.78
       image: karloie/multipass
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
