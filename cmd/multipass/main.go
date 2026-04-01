@@ -41,7 +41,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	configPath := flag.String("config", "config.yaml", "path to configuration file")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] <config-file>\n\n", os.Args[0])
+		fmt.Fprintln(flag.CommandLine.Output(), "Flags:")
+		flag.PrintDefaults()
+	}
+
 	showVersion := flag.Bool("version", false, "show version information")
 	flag.Parse()
 
@@ -50,7 +55,14 @@ func main() {
 		os.Exit(0)
 	}
 
-	cfg, err := config.Load(*configPath)
+	configPath, err := parseConfigPath(flag.Args())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		flag.Usage()
+		os.Exit(2)
+	}
+
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fatal("failed to load config", err)
 	}
@@ -182,6 +194,19 @@ func getLogHandler(level slog.Level) (slog.Handler, error) {
 func fatal(message string, err error) {
 	slog.Error(message, slog.Any("error", err))
 	os.Exit(1)
+}
+
+func parseConfigPath(args []string) (string, error) {
+	if len(args) != 1 {
+		return "", fmt.Errorf("expected exactly 1 config file argument")
+	}
+
+	configPath := strings.TrimSpace(args[0])
+	if configPath == "" {
+		return "", fmt.Errorf("config file argument must not be empty")
+	}
+
+	return configPath, nil
 }
 
 func getSessionTTL(cfg *config.Config) (time.Duration, error) {

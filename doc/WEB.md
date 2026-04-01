@@ -404,7 +404,7 @@ If Email or Name fields are empty:
 
 # Start Multipass with the checked-in OIDC profile
 cd ../multipass
-go run ./cmd/multipass -config config.oidc.yaml
+go run ./cmd/multipass config.oidc.yaml
 
 # Login through the normal OIDC route
 xdg-open "http://localhost:8080/login"

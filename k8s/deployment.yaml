@@ -30,7 +30,6 @@ spec:
           containerPort: 8080
           protocol: TCP
         args:
-        - -config
         - /etc/multipass/config.yaml
         securityContext:
           allowPrivilegeEscalation: false

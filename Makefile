@@ -8,6 +8,7 @@ COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DOCKER_IMAGE?=karloie/multipass
 DEV_TAG?=dev
 DOCKER_PLATFORMS?=linux/amd64,linux/arm64
+CONFIG?=
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
 build: build-prod
@@ -18,11 +19,12 @@ build-prod:
 	@echo "✓ Production build complete: ./$(BINARY_NAME)"
 
 run:
+	@test -n "$(CONFIG)" || (echo "Usage: make run CONFIG=config.oidc.yaml" && exit 1)
 	@echo "Starting Multipass"
-	@echo "Preferred realistic local flow: run a local OIDC provider and start Multipass with -config config.oidc.yaml"
+	@echo "Preferred realistic local flow: run a local OIDC provider and start Multipass with config.oidc.yaml"
 	@echo "Optional: set MULTIPASS_LOG_LEVEL=debug|info|warn|error"
 	@echo "Optional: set MULTIPASS_LOG_FORMAT=json|text"
-	go run $(LDFLAGS) ./cmd/multipass
+	go run $(LDFLAGS) ./cmd/multipass $(CONFIG)
 
 test:
 	go test -count=1 -v -tags test ./...
@@ -68,7 +70,7 @@ docker-login:
 	fi
 
 docker-run:
-	docker run -p 8080:8080 -v $(PWD)/config.yaml:/etc/multipass/config.yaml $(BINARY_NAME):$(VERSION)
+	docker run -p 8080:8080 -v $(PWD)/config.yaml:/etc/multipass/config.yaml $(BINARY_NAME):$(VERSION) /etc/multipass/config.yaml
 
 # Development helpers
 fmt:
@@ -99,8 +101,8 @@ ci-integration-test: integration-test
 ci-release:
 	@echo "Building Multipass release artifacts"
 	shipkit install --force goreleaser
-	shipkit publish-goreleaser --skip-docker --clean
-	shipkit publish-docker
+	shipkit release-goreleaser --skip-docker --clean
+	shipkit release-docker
 
 ci-summary:
 	@echo "Multipass release complete"

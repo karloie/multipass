@@ -35,4 +35,4 @@ USER multipass
 EXPOSE 8080
 
 ENTRYPOINT ["/app/multipass"]
-CMD ["-config", "/etc/multipass/config.yaml"]
+CMD ["/etc/multipass/config.yaml"]

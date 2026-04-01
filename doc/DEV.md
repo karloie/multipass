@@ -11,7 +11,7 @@ cp config.oidc.yaml config.yaml
 
 # Terminal 2
 cd ../multipass
-MULTIPASS_LOG_LEVEL=debug MULTIPASS_LOG_FORMAT=text go run ./cmd/multipass -config config.yaml
+MULTIPASS_LOG_LEVEL=debug MULTIPASS_LOG_FORMAT=text go run ./cmd/multipass config.yaml
 ```
 
 This is the preferred realistic local flow because Multipass stays on the same
@@ -103,7 +103,7 @@ docker build -t multipass:latest .
 
 **Run:**
 ```bash
-docker run -p 8080:8080 -v ./config.yaml:/etc/multipass/config.yaml karloie/multipass:latest
+docker run -p 8080:8080 -v ./config.yaml:/etc/multipass/config.yaml karloie/multipass:latest /etc/multipass/config.yaml
 ```
 
 Note: Docker builds use the same runtime feature set as the normal binary.

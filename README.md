@@ -88,6 +88,13 @@ For a realistic local profile backed by an external OIDC provider, use
 `token`, so moving from local OIDC to production OIDC is mostly an issuer and client
 configuration change instead of a provider swap.
 
+Start Multipass by passing exactly one config file argument:
+
+```bash
+./multipass config.oidc.yaml
+go run ./cmd/multipass config.oidc.yaml
+```
+
 ### URL Routing
 
 Requests are routed by backend name: `http://multipass:8080/<backend>/<path>`
