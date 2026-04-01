@@ -45,13 +45,13 @@ Multipass solves that at the edge:
 Multipass sits both in front of Grafana for browser sign-in and on the datasource path between Grafana or API clients and the LGTM backends.
 
 ```
-        Browser users                OIDC provider
-            |                              ^
-            | web login + session          |
-            v                              |
-    +-----------------+                    |
-    |    Multipass    |--------------------+
-    |  browser edge   |
+        Browser users
+            |
+            | web login + session
+            v
+    +-----------------+        +---------------+
+    |    Multipass    |------->| OIDC provider |
+    |  browser edge   |        +---------------+
     +-----------------+
             |
             | trusted user headers

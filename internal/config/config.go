@@ -47,6 +47,7 @@ type TrustedProxyConfig struct {
 	IDHeader          string `yaml:"idHeader,omitempty"`
 	EmailHeader       string `yaml:"emailHeader,omitempty"`
 	NameHeader        string `yaml:"nameHeader,omitempty"`
+	GroupsHeader      string `yaml:"groupsHeader,omitempty"`
 	PrincipalIDHeader string `yaml:"principalIdHeader,omitempty"`
 	TenantIDHeader    string `yaml:"tenantIdHeader,omitempty"`
 	SecretHeader      string `yaml:"secretHeader,omitempty"`

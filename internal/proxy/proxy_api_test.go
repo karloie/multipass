@@ -234,11 +234,13 @@ func TestProxy_ApiBackends(t *testing.T) {
 			trustedProxyConfig: &config.TrustedProxyConfig{
 				Enabled:      true,
 				UserHeader:   "X-Grafana-User",
+				GroupsHeader: "X-Multipass-Groups",
 				SecretHeader: "X-Multipass-Proxy-Secret",
 				SecretValue:  "core-test-shared-secret",
 			},
 			requestHeaders: map[string]string{
 				"X-Grafana-User":           "paul@example.com",
+				"X-Multipass-Groups":       "developers",
 				"X-Multipass-Proxy-Secret": "core-test-shared-secret",
 			},
 			namespace: "utv",
@@ -491,6 +493,32 @@ func TestProxy_ApiBackends(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			executeProxyTestCase(t, tt)
+		})
+	}
+}
+
+func TestTrustedProxyGroups(t *testing.T) {
+	tests := []struct {
+		name        string
+		headerValue string
+		expected    []string
+	}{
+		{name: "empty", headerValue: "", expected: nil},
+		{name: "single", headerValue: "developers", expected: []string{"developers"}},
+		{name: "trim and dedupe", headerValue: " developers, ops ,developers ,, ", expected: []string{"developers", "ops"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := trustedProxyGroups(test.headerValue)
+			if len(got) != len(test.expected) {
+				t.Fatalf("unexpected group count: got %d want %d (%v)", len(got), len(test.expected), got)
+			}
+			for index := range test.expected {
+				if got[index] != test.expected[index] {
+					t.Fatalf("unexpected group at %d: got %q want %q", index, got[index], test.expected[index])
+				}
+			}
 		})
 	}
 }

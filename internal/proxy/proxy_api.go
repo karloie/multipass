@@ -100,6 +100,7 @@ func trustedProxyUserInfo(r *http.Request, trustedProxyConfig config.TrustedProx
 	if email == "" {
 		email = trustedUser
 	}
+	groups := trustedProxyGroups(r.Header.Get(trustedProxyConfig.GroupsHeader))
 
 	return &auth.UserInfo{
 		ID:          trustedID,
@@ -107,5 +108,33 @@ func trustedProxyUserInfo(r *http.Request, trustedProxyConfig config.TrustedProx
 		TenantID:    strings.TrimSpace(r.Header.Get(trustedProxyConfig.TenantIDHeader)),
 		Email:       email,
 		Name:        strings.TrimSpace(r.Header.Get(trustedProxyConfig.NameHeader)),
+		Groups:      groups,
 	}, nil
+}
+
+func trustedProxyGroups(headerValue string) []string {
+	if strings.TrimSpace(headerValue) == "" {
+		return nil
+	}
+
+	parts := strings.Split(headerValue, ",")
+	groups := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		group := strings.TrimSpace(part)
+		if group == "" {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+
+	if len(groups) == 0 {
+		return nil
+	}
+
+	return groups
 }

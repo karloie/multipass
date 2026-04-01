@@ -17,6 +17,7 @@ auth:
   # trustedProxy:
   #   enabled: true
   #   userHeader: X-Grafana-User
+  #   groupsHeader: X-Multipass-Groups
   #   secretHeader: X-Multipass-Proxy-Secret
   #   secretValue: change-me
   
