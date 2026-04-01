@@ -69,6 +69,8 @@ docker-release: docker-login
 	docker buildx build --progress=plain --platform $(DOCKER_PLATFORMS) -t $(DOCKER_IMAGE):$(TAG) --push .
 
 # Shipkit CI hooks
+ci-generate:
+	@echo "No code generation needed for multipass"
 ci-build: build
 ci-test: test
 ci-integration-test: integration-test
@@ -76,3 +78,5 @@ ci-release:
 	$(SHIPKIT) install --force goreleaser
 	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --platform "$(DOCKER_PLATFORMS)" --readme README.md --update-readme
 	$(SHIPKIT) release-goreleaser --skip-docker --clean
+ci-summary:
+	@echo "Multipass release complete"
