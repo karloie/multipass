@@ -9,7 +9,7 @@ import (
 	"github.com/karloie/multipass/internal/config"
 )
 
-func TestProxy_WebBackends(t *testing.T) {
+func TestWebBackends(t *testing.T) {
 	tests := []proxyTestCase{
 		{
 			name:        "web backend with user identity headers",

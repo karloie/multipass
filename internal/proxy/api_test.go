@@ -8,9 +8,10 @@ import (
 
 	"github.com/karloie/multipass/internal/auth"
 	"github.com/karloie/multipass/internal/config"
+	queryrewrite "github.com/karloie/multipass/internal/query"
 )
 
-func TestProxy_ApiBackends(t *testing.T) {
+func TestAPIBackends(t *testing.T) {
 	tests := []proxyTestCase{
 		{
 			name:                 "host-based backend matches shared host path prefix",
@@ -49,15 +50,12 @@ func TestProxy_ApiBackends(t *testing.T) {
 			expectBackendCall: false,
 		},
 		{
-			name:        "request-routed Prometheus backend allows permitted namespace and strips routing parameter",
-			backendName: "mimir",
-			backendType: "prometheus",
-			requestPath: "/mimir/api/v1/query?tm_namespace=utv&query=up",
-			backendNamespaceRouting: &config.NamespaceRoutingConfig{
-				Mode:      "request",
-				Parameter: "tm_namespace",
-			},
-			authToken: "valid-token",
+			name:                    "request-routed Prometheus backend allows permitted namespace and strips routing parameter",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestPath:             "/mimir/api/v1/query?tm_namespace=utv&query=up",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-ok"}, nil
 			},
@@ -78,15 +76,12 @@ func TestProxy_ApiBackends(t *testing.T) {
 			expectBackendCall:      true,
 		},
 		{
-			name:             "request-routed Prometheus backend classifies raw namespace into cluster scope",
-			backendName:      "mimir",
-			backendType:      "prometheus",
-			backendNamespace: "core-test",
-			requestPath:      "/mimir/api/v1/query?tm_namespace=argocd&query=up",
-			backendNamespaceRouting: &config.NamespaceRoutingConfig{
-				Mode:      "request",
-				Parameter: "tm_namespace",
-			},
+			name:                    "request-routed Prometheus backend classifies raw namespace into cluster scope",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			backendNamespace:        "core-test",
+			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
+			backendNamespaceRouting: requestNamespaceRouting(""),
 			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
 				DefaultSegment: "dev",
 				OpsExact:       []string{"argocd"},
@@ -112,15 +107,201 @@ func TestProxy_ApiBackends(t *testing.T) {
 			expectBackendCall:      true,
 		},
 		{
-			name:        "request-routed Prometheus backend denies forbidden namespace",
-			backendName: "mimir",
-			backendType: "prometheus",
-			requestPath: "/mimir/api/v1/query?tm_namespace=monitoring&query=up",
-			backendNamespaceRouting: &config.NamespaceRoutingConfig{
-				Mode:      "request",
-				Parameter: "tm_namespace",
+			name:                    "request-routed backend rewrites query after namespace stripping",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestPath:             "/mimir/api/v1/query?tm_namespace=utv&query=up&debug=true",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			queryRewrite: &queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{
+				{Action: "rename", Name: "query", To: "expr"},
+				{Action: "add", Name: "tenant", Value: "{{namespace}}"},
+				{Action: "set", Name: "source", Value: "multipass-{{backend}}"},
+				{Action: "delete", Name: "debug"},
+			}},
+			authToken: "valid-token",
+			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
+				return &auth.UserInfo{ID: "user-query-rewrite"}, nil
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"utv-team"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"utv-team": {"utv"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
+			expectedBackendQuery:   "expr=up&source=multipass-mimir&tenant=utv",
+			expectedAuditNamespace: "utv",
+			expectAuditEvent:       true,
+			expectAuthCall:         true,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
+			name:                    "request-routed backend reads namespace from form body and strips it",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestMethod:           http.MethodPost,
+			requestPath:             "/mimir/api/v1/query",
+			requestBody:             "tm_namespace=utv&query=up",
+			requestContentType:      "application/x-www-form-urlencoded",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			authToken:               "valid-token",
+			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
+				return &auth.UserInfo{ID: "user-request-post"}, nil
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"utv-team"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"utv-team": {"utv"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
+			expectedBackendBody:    "query=up",
+			expectedAuditNamespace: "utv",
+			expectAuditEvent:       true,
+			expectAuthCall:         true,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
+			name:                    "request-routed backend with query source ignores body routing parameter",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestMethod:           http.MethodPost,
+			requestPath:             "/mimir/api/v1/query?query=up",
+			requestBody:             "tm_namespace=utv",
+			requestContentType:      "application/x-www-form-urlencoded",
+			backendNamespaceRouting: requestNamespaceRouting(namespaceRoutingSourceQuery),
+			authToken:               "valid-token",
+			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
+				return &auth.UserInfo{ID: "user-request-query-source"}, nil
+			},
+			authzEnabled:      true,
+			expectedStatus:    http.StatusBadRequest,
+			expectAuditEvent:  false,
+			expectAuthCall:    true,
+			expectAuthzCall:   false,
+			expectBackendCall: false,
+		},
+		{
+			name:                    "request-routed backend with body source ignores query routing parameter",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestMethod:           http.MethodPost,
+			requestPath:             "/mimir/api/v1/query?tm_namespace=wrong&query=up",
+			requestBody:             "tm_namespace=utv",
+			requestContentType:      "application/x-www-form-urlencoded",
+			backendNamespaceRouting: requestNamespaceRouting(namespaceRoutingSourceBody),
+			authToken:               "valid-token",
+			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
+				return &auth.UserInfo{ID: "user-request-body-source"}, nil
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"utv-team"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"utv-team": {"utv"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
+			expectedBackendQuery:   "tm_namespace=wrong&query=up",
+			expectedBackendBody:    "",
+			expectedAuditNamespace: "utv",
+			expectAuditEvent:       true,
+			expectAuthCall:         true,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
+			name:               "fixed-namespace backend rewrites form-encoded post body",
+			backendName:        "mimir",
+			backendType:        "prometheus",
+			backendNamespace:   "utv",
+			requestMethod:      http.MethodPost,
+			requestPath:        "/mimir/api/v1/query",
+			requestBody:        "query=up&debug=true",
+			requestContentType: "application/x-www-form-urlencoded",
+			queryRewrite: &queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{
+				{Action: "rename", Name: "query", To: "expr"},
+				{Action: "add", Name: "tenant", Value: "{{namespace}}"},
+				{Action: "set", Name: "source", Value: "multipass-{{backend}}"},
+				{Action: "delete", Name: "debug"},
+			}},
+			authToken: "valid-token",
+			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
+				return &auth.UserInfo{ID: "user-query-rewrite-post"}, nil
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"utv-team"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"utv-team": {"utv"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
+			expectedBackendBody:    "expr=up&source=multipass-mimir&tenant=utv",
+			expectedAuditNamespace: "utv",
+			expectAuditEvent:       true,
+			expectAuthCall:         true,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
+			name:                    "route-aware semantics enforce selector matchers on series endpoint",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestPath:             "/mimir/api/v1/series?tm_namespace=utv&match%5B%5D=up",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			queryRewrite: &queryrewrite.RewriteConfig{
+				Operations: []queryrewrite.RewriteOperation{{
+					Action: "rename",
+					Name:   "query",
+					To:     "expr",
+					Routes: []string{"/api/v1/query"},
+				}},
+				Semantics: []queryrewrite.SemanticRule{{
+					Language: "selector",
+					Params:   []string{"match[]"},
+					Routes:   []string{"/api/v1/series"},
+					Require: []queryrewrite.MatcherRequirement{{
+						Name:  "namespace",
+						Value: "{{namespace}}",
+					}},
+				}},
 			},
 			authToken: "valid-token",
+			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
+				return &auth.UserInfo{ID: "user-series-selector"}, nil
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"utv-team"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"utv-team": {"utv"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
+			expectedBackendQuery:   "match%5B%5D=%7B__name__%3D%22up%22%2Cnamespace%3D%22utv%22%7D",
+			expectedAuditNamespace: "utv",
+			expectAuditEvent:       true,
+			expectAuthCall:         true,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
+			name:                    "request-routed Prometheus backend denies forbidden namespace",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestPath:             "/mimir/api/v1/query?tm_namespace=monitoring&query=up",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-deny"}, nil
 			},
@@ -139,15 +320,12 @@ func TestProxy_ApiBackends(t *testing.T) {
 			expectBackendCall:      false,
 		},
 		{
-			name:        "request-routed Prometheus backend requires namespace parameter",
-			backendName: "mimir",
-			backendType: "prometheus",
-			requestPath: "/mimir/api/v1/query?query=up",
-			backendNamespaceRouting: &config.NamespaceRoutingConfig{
-				Mode:      "request",
-				Parameter: "tm_namespace",
-			},
-			authToken: "valid-token",
+			name:                    "request-routed Prometheus backend requires namespace parameter",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestPath:             "/mimir/api/v1/query?query=up",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-missing"}, nil
 			},

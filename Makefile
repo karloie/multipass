@@ -1,49 +1,43 @@
-.PHONY: build build-prod run test integration-test coverage clean docker-build docker-run docker-login
+.PHONY: build run test integration-test coverage clean docker-login docker-release
 .PHONY: ci-generate ci-build ci-test ci-integration-test ci-release ci-summary
 
-# Build variables
-BINARY_NAME=multipass
-VERSION?=v0.0.1
-COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-DOCKER_IMAGE?=karloie/multipass
-DEV_TAG?=dev
-DOCKER_PLATFORMS?=linux/amd64,linux/arm64
-CONFIG?=
-LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
+.DEFAULT_GOAL := test
 
-build: build-prod
+GO ?= go
+SHIPKIT ?= shipkit
 
-build-prod:
-	@echo "Building PRODUCTION binary"
-	go build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/multipass
-	@echo "✓ Production build complete: ./$(BINARY_NAME)"
+BINARY_NAME ?= multipass
+CMD_PACKAGE ?= ./cmd/multipass
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DOCKER_IMAGE ?= karloie/multipass
+DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
+CONFIG ?=
 
-run:
-	@test -n "$(CONFIG)" || (echo "Usage: make run CONFIG=config.oidc.yaml" && exit 1)
-	@echo "Starting Multipass"
-	@echo "Preferred realistic local flow: run a local OIDC provider and start Multipass with config.oidc.yaml"
-	@echo "Optional: set MULTIPASS_LOG_LEVEL=debug|info|warn|error"
-	@echo "Optional: set MULTIPASS_LOG_FORMAT=json|text"
-	go run $(LDFLAGS) ./cmd/multipass $(CONFIG)
+GO_TEST_FLAGS ?= -count=1 -v
+LDFLAGS = -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
+
+build:
+	$(GO) build $(LDFLAGS) -o $(BINARY_NAME) $(CMD_PACKAGE)
 
 test:
-	go test -count=1 -v -tags test ./...
+	$(GO) test $(GO_TEST_FLAGS) -tags test ./...
 
 integration-test:
-	go test -count=1 -v -tags integration ./...
+	$(GO) test $(GO_TEST_FLAGS) -tags integration ./...
 
 coverage:
-	@go test -count=1 -tags test -coverprofile=coverage.out ./... > /dev/null 2>&1
+	@$(GO) test -count=1 -tags test -coverprofile=coverage.out ./... > /dev/null 2>&1
 	@printf "  %-38s │ %9s │ %10s  \n" "Package" "Coverage" "Cross Cov"
 	@echo "╔──────────────────────────────────────────────────────────────────╗"
-	@for pkg in $$(go list ./...); do \
+	@for pkg in $$($(GO) list ./...); do \
 		shortpkg=$$(echo $$pkg | sed 's|github.com/[^/]*/[^/]*/||'); \
-		owncov=$$(go test -tags test -cover $$pkg 2>&1 | grep -oP 'coverage: \K[0-9.]+%' | head -1); \
+		owncov=$$($(GO) test -tags test -cover $$pkg 2>&1 | grep -oP 'coverage: \K[0-9.]+%' | head -1); \
 		if [ -z "$$owncov" ]; then owncov="n/a"; fi; \
 		pkgfile=$$(echo $$shortpkg | sed 's|/|-|g'); \
-		go test -tags test -coverprofile=cross-$$pkgfile.out -coverpkg=$$pkg ./... > /dev/null 2>&1 || continue; \
+		$(GO) test -tags test -coverprofile=cross-$$pkgfile.out -coverpkg=$$pkg ./... > /dev/null 2>&1 || continue; \
 		if [ -f cross-$$pkgfile.out ] && [ -s cross-$$pkgfile.out ]; then \
-			crosscov=$$(go tool cover -func=cross-$$pkgfile.out 2>/dev/null | grep "^$$pkg/" | awk '{sum+=substr($$NF,1,length($$NF)-1); cnt++} END {if (cnt>0) printf "%.1f%%", sum/cnt; else print "0.0%"}'); \
+			crosscov=$$($(GO) tool cover -func=cross-$$pkgfile.out 2>/dev/null | grep "^$$pkg/" | awk '{sum+=substr($$NF,1,length($$NF)-1); cnt++} END {if (cnt>0) printf "%.1f%%", sum/cnt; else print "0.0%"}'); \
 			if [ -z "$$crosscov" ]; then crosscov="0.0%"; fi; \
 		else \
 			crosscov="n/a"; \
@@ -51,15 +45,16 @@ coverage:
 		printf "║ %-38s │ %9s │ %11s ║\n" "$$shortpkg" "$$owncov" "$$crosscov"; \
 	done
 	@echo "╚──────────────────────────────────────────────────────────────────╝"
-	@printf "  %-38s │ %9s │ %11s  \n" "TOTAL" "$$(go tool cover -func=coverage.out 2>/dev/null | grep 'total:' | awk '{print $$3}')" ""
+	@printf "  %-38s │ %9s │ %11s  \n" "TOTAL" "$$($(GO) tool cover -func=coverage.out 2>/dev/null | grep 'total:' | awk '{print $$3}')" ""
 	@rm -f cross-*.out coverage.out
 
-clean:
-	rm -f $(BINARY_NAME) $(BINARY_NAME)-test $(BINARY_NAME)-prod
-	rm -f *.out
+run:
+	@test -n "$(CONFIG)" || (echo "Usage: make run CONFIG=config.oidc.yaml" && exit 1)
+	$(GO) run $(LDFLAGS) $(CMD_PACKAGE) $(CONFIG)
 
-docker-build:
-	docker build -t $(BINARY_NAME):$(VERSION) .
+clean:
+	rm -f $(BINARY_NAME)
+	rm -f *.out
 
 docker-login:
 	@if [ -n "$(DOCKERHUB_USERNAME)" ] && [ -n "$(DOCKERHUB_TOKEN)" ]; then \
@@ -69,40 +64,15 @@ docker-login:
 		echo "DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not set, using existing docker credentials"; \
 	fi
 
-docker-run:
-	docker run -p 8080:8080 -v $(PWD)/config.yaml:/etc/multipass/config.yaml $(BINARY_NAME):$(VERSION) /etc/multipass/config.yaml
-
-# Development helpers
-fmt:
-	go fmt ./...
-
-lint:
-	golangci-lint run
-
-deps:
-	go mod download
-	go mod tidy
-
-# Quick test with curl
-smoke-test:
-	@echo "Testing health endpoint..."
-	@curl -s http://localhost:8080/health
-	@echo "\n\nTesting info endpoint..."
-	@curl -s http://localhost:8080/
+docker-release: docker-login
+	@test -n "$(TAG)" || (echo "Usage: make docker-release TAG=v0.0.1" && exit 1)
+	docker buildx build --progress=plain --platform $(DOCKER_PLATFORMS) -t $(DOCKER_IMAGE):$(TAG) --push .
 
 # Shipkit CI hooks
-ci-generate:
-	@echo "No code generation needed for multipass"
-
-ci-build: build-prod
+ci-build: build
 ci-test: test
 ci-integration-test: integration-test
-
 ci-release:
-	@echo "Building Multipass release artifacts"
-	shipkit install --force goreleaser
-	shipkit release-goreleaser --skip-docker --clean
-	shipkit release-docker --image "$(DOCKER_IMAGE)" --platform "$(DOCKER_PLATFORMS)" --readme README.md --update-readme
-
-ci-summary:
-	@echo "Multipass release complete"
+	$(SHIPKIT) install --force goreleaser
+	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --platform "$(DOCKER_PLATFORMS)" --readme README.md --update-readme
+	$(SHIPKIT) release-goreleaser --skip-docker --clean

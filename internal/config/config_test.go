@@ -4,7 +4,27 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	queryrewrite "github.com/karloie/multipass/internal/query"
 )
+
+func newTestConfig(backend BackendConfig) *Config {
+	return &Config{
+		Server: ServerConfig{Port: 8080},
+		Auth:   AuthConfig{Provider: "oidc", OIDC: OIDCConfig{IssuerURL: "https://issuer", ClientID: "client", ClientSecret: "secret", RedirectURL: "https://example.com/login/generic_oauth"}},
+		Backends: map[string]BackendConfig{
+			"test": backend,
+		},
+	}
+}
+
+func newBackendWithQueryRewrite(rewrite *queryrewrite.RewriteConfig) BackendConfig {
+	return BackendConfig{
+		Type:         "generic",
+		Endpoint:     "http://example",
+		QueryRewrite: rewrite,
+	}
+}
 
 func TestLoadExpandsEnvironmentVariables(t *testing.T) {
 	t.Setenv("MULTIPASS_OIDC_CLIENT_SECRET", "oidc-secret")
@@ -162,6 +182,43 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			},
 		},
 		{
+			name: "request routing accepts query source",
+			backend: BackendConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				NamespaceRouting: &NamespaceRoutingConfig{
+					Mode:      "request",
+					Parameter: "tm_namespace",
+					Source:    "query",
+				},
+			},
+		},
+		{
+			name: "request routing accepts body source",
+			backend: BackendConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				NamespaceRouting: &NamespaceRoutingConfig{
+					Mode:      "request",
+					Parameter: "tm_namespace",
+					Source:    "body",
+				},
+			},
+		},
+		{
+			name: "request routing rejects invalid source",
+			backend: BackendConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				NamespaceRouting: &NamespaceRoutingConfig{
+					Mode:      "request",
+					Parameter: "tm_namespace",
+					Source:    "header",
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "fixed routing valid",
 			backend: BackendConfig{
 				Type:      "prometheus",
@@ -267,15 +324,84 @@ func TestConfigValidateExternalPathPrefixes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Server: ServerConfig{Port: 8080},
-				Auth:   AuthConfig{Provider: "oidc", OIDC: OIDCConfig{IssuerURL: "https://issuer", ClientID: "client", ClientSecret: "secret", RedirectURL: "https://example.com/login/generic_oauth"}},
-				Backends: map[string]BackendConfig{
-					"test": tt.backend,
-				},
+			err := newTestConfig(tt.backend).Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("expected validation error, got nil")
 			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no validation error, got %v", err)
+			}
+		})
+	}
+}
 
-			err := cfg.Validate()
+func TestConfigValidateQueryRewrite(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend BackendConfig
+		wantErr bool
+	}{
+		{
+			name:    "query rewrite requires operations",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{}),
+			wantErr: true,
+		},
+		{
+			name: "query rewrite rejects invalid action",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{
+				{Action: "replace", Name: "query", Value: "up"},
+			}}),
+			wantErr: true,
+		},
+		{
+			name:    "rename requires target parameter",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{{Action: "rename", Name: "query"}}}),
+			wantErr: true,
+		},
+		{
+			name: "query rewrite valid",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{
+				{Action: "rename", Name: "query", To: "expr"},
+				{Action: "add", Name: "tenant", Value: "{{namespace}}"},
+				{Action: "set", Name: "source", Value: "{{backend}}"},
+				{Action: "delete", Name: "debug"},
+			}}),
+		},
+		{
+			name: "query rewrite semantic rules valid",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{Semantics: []queryrewrite.SemanticRule{{
+				Language: "promql",
+				Params:   []string{"query"},
+				Routes:   []string{"/api/v1/query", "/api/v1/query_range"},
+				Require: []queryrewrite.MatcherRequirement{{
+					Name:  "namespace",
+					Value: "{{namespace}}",
+				}},
+			}}}),
+		},
+		{
+			name: "query rewrite semantic rules reject unsupported language",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{Semantics: []queryrewrite.SemanticRule{{
+				Language: "logql",
+				Params:   []string{"query"},
+				Require:  []queryrewrite.MatcherRequirement{{Name: "namespace", Value: "{{namespace}}"}},
+			}}}),
+			wantErr: true,
+		},
+		{
+			name:    "query rewrite tenant label shorthand valid",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{TenantLabel: &queryrewrite.TenantLabelRule{Name: "namespace"}}),
+		},
+		{
+			name:    "query rewrite tenant label shorthand rejects invalid mode",
+			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{TenantLabel: &queryrewrite.TenantLabelRule{Mode: "rewrite"}}),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := newTestConfig(tt.backend).Validate()
 			if tt.wantErr && err == nil {
 				t.Fatal("expected validation error, got nil")
 			}

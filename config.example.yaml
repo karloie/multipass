@@ -176,6 +176,47 @@ backends:
   #   namespaceRouting:
   #     mode: request
   #     parameter: tm_namespace
+  #     source: both
+  #   queryRewrite:
+  #     tenantLabel:
+  #       name: namespace
+  #       value: "{{namespace}}"
+  #       mode: validate-or-append
+  #     # Use explicit semantics only when you need non-default params,
+  #     # routes, or multiple matcher requirements.
+  #     operations:
+  #       - action: rename
+  #         name: query
+  #         to: expr
+  #         routes:
+  #           - /api/v1/query
+  #           - /api/v1/query_range
+  #       - action: add
+  #         name: tenant
+  #         value: "{{namespace}}"
+  #       - action: set
+  #         name: source
+  #         value: "multipass-{{backend}}"
+  #       - action: delete
+  #         name: debug
+  #     semantics:
+  #       - language: promql
+  #         params:
+  #           - query
+  #         routes:
+  #           - /api/v1/query
+  #           - /api/v1/query_range
+  #         require:
+  #           - name: namespace
+  #             value: "{{namespace}}"
+  #       - language: selector
+  #         params:
+  #           - match[]
+  #         routes:
+  #           - /api/v1/series
+  #         require:
+  #           - name: namespace
+  #             value: "{{namespace}}"
 
   # Request routing can also classify raw Kubernetes namespaces into a
   # cluster scope when authz.namespaceClassifier is configured. In that mode,
@@ -187,6 +228,7 @@ backends:
   #   namespaceRouting:
   #     mode: request
   #     parameter: tm_namespace
+  #     source: both
 
   # Example fixed-namespace aliases for a first rollout.
   # Each alias is bound to one namespace. Caller-supplied ?namespace=

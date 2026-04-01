@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	queryrewrite "github.com/karloie/multipass/internal/query"
 	"gopkg.in/yaml.v3"
 )
 
@@ -157,6 +158,7 @@ type BackendConfig struct {
 	Endpoint             string                  `yaml:"endpoint"`
 	Namespace            string                  `yaml:"namespace,omitempty"`
 	NamespaceRouting     *NamespaceRoutingConfig `yaml:"namespaceRouting,omitempty"`
+	QueryRewrite         *QueryRewriteConfig     `yaml:"queryRewrite,omitempty"`
 	ReadinessURL         string                  `yaml:"readinessUrl,omitempty"`
 	ExternalHost         string                  `yaml:"externalHost,omitempty"`
 	ExternalPathPrefixes []string                `yaml:"externalPathPrefixes,omitempty"`
@@ -168,7 +170,14 @@ type BackendConfig struct {
 type NamespaceRoutingConfig struct {
 	Mode      string `yaml:"mode,omitempty"`      // fixed, request
 	Parameter string `yaml:"parameter,omitempty"` // request query parameter when mode=request
+	Source    string `yaml:"source,omitempty"`    // query, body, both
 }
+
+// QueryRewriteConfig defines backend query-string mutations.
+type QueryRewriteConfig = queryrewrite.RewriteConfig
+
+// QueryRewriteOperation defines a single query-string mutation.
+type QueryRewriteOperation = queryrewrite.RewriteOperation
 
 // WebConfig defines web header injection.
 type WebConfig struct {
@@ -290,10 +299,34 @@ func (c *Config) GetBackendNames() []string {
 
 // Validate checks whether the configuration is valid.
 func (c *Config) Validate() error {
+	if err := c.validateServer(); err != nil {
+		return err
+	}
+	if err := c.validateAuth(); err != nil {
+		return err
+	}
+	if err := c.validateAuthz(); err != nil {
+		return err
+	}
+	if err := c.validateAudit(); err != nil {
+		return err
+	}
+	if err := c.validateBackends(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Config) validateServer() error {
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("invalid server port: %d (must be 1-65535)", c.Server.Port)
 	}
 
+	return nil
+}
+
+func (c *Config) validateAuth() error {
 	if c.Auth.Provider == "" {
 		return fmt.Errorf("auth provider is required")
 	}
@@ -301,54 +334,78 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("auth provider must be: oidc")
 	}
 
-	if c.Auth.Provider == "oidc" {
-		if c.Auth.OIDC.IssuerURL == "" {
-			return fmt.Errorf("oidc issuerUrl is required")
-		}
-		if c.Auth.OIDC.ClientID == "" {
-			return fmt.Errorf("oidc clientId is required")
-		}
-		if c.Auth.OIDC.ClientSecret == "" {
-			return fmt.Errorf("oidc clientSecret is required")
-		}
-		if c.Auth.OIDC.RedirectURL == "" {
-			return fmt.Errorf("oidc redirectUrl is required")
-		}
-
-		for fieldName, fieldValue := range map[string]string{
-			"loginPath":    c.Auth.OIDC.LoginPath,
-			"callbackPath": c.Auth.OIDC.CallbackPath,
-			"logoutPath":   c.Auth.OIDC.LogoutPath,
-		} {
-			if fieldValue != "" && !strings.HasPrefix(fieldValue, "/") {
-				return fmt.Errorf("oidc %s must start with '/'", fieldName)
-			}
-		}
-
-		if c.Auth.OIDC.PostLogoutRedirectURL != "" {
-			logoutURL, err := url.Parse(c.Auth.OIDC.PostLogoutRedirectURL)
-			if err != nil || !logoutURL.IsAbs() {
-				return fmt.Errorf("oidc postLogoutRedirectUrl must be an absolute URL")
-			}
-		}
+	if err := c.validateOIDC(); err != nil {
+		return err
 	}
 
 	if c.Auth.SessionStore.Store != "" && c.Auth.SessionStore.Store != "memory" {
 		return fmt.Errorf("auth sessionStore store must be 'memory' when configured")
 	}
 
-	if c.Auth.TrustedProxy.Enabled {
-		if c.Auth.TrustedProxy.UserHeader == "" && c.Auth.TrustedProxy.IDHeader == "" {
-			return fmt.Errorf("auth trustedProxy requires userHeader or idHeader when enabled")
-		}
-		if c.Auth.TrustedProxy.SecretHeader == "" {
-			return fmt.Errorf("auth trustedProxy secretHeader is required when enabled")
-		}
-		if c.Auth.TrustedProxy.SecretValue == "" {
-			return fmt.Errorf("auth trustedProxy secretValue is required when enabled")
+	if err := c.validateTrustedProxy(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Config) validateOIDC() error {
+	if c.Auth.Provider != "oidc" {
+		return nil
+	}
+
+	if c.Auth.OIDC.IssuerURL == "" {
+		return fmt.Errorf("oidc issuerUrl is required")
+	}
+	if c.Auth.OIDC.ClientID == "" {
+		return fmt.Errorf("oidc clientId is required")
+	}
+	if c.Auth.OIDC.ClientSecret == "" {
+		return fmt.Errorf("oidc clientSecret is required")
+	}
+	if c.Auth.OIDC.RedirectURL == "" {
+		return fmt.Errorf("oidc redirectUrl is required")
+	}
+
+	for fieldName, fieldValue := range map[string]string{
+		"loginPath":    c.Auth.OIDC.LoginPath,
+		"callbackPath": c.Auth.OIDC.CallbackPath,
+		"logoutPath":   c.Auth.OIDC.LogoutPath,
+	} {
+		if fieldValue != "" && !strings.HasPrefix(fieldValue, "/") {
+			return fmt.Errorf("oidc %s must start with '/'", fieldName)
 		}
 	}
 
+	if c.Auth.OIDC.PostLogoutRedirectURL != "" {
+		logoutURL, err := url.Parse(c.Auth.OIDC.PostLogoutRedirectURL)
+		if err != nil || !logoutURL.IsAbs() {
+			return fmt.Errorf("oidc postLogoutRedirectUrl must be an absolute URL")
+		}
+	}
+
+	return nil
+}
+
+func (c *Config) validateTrustedProxy() error {
+	if !c.Auth.TrustedProxy.Enabled {
+		return nil
+	}
+
+	if c.Auth.TrustedProxy.UserHeader == "" && c.Auth.TrustedProxy.IDHeader == "" {
+		return fmt.Errorf("auth trustedProxy requires userHeader or idHeader when enabled")
+	}
+	if c.Auth.TrustedProxy.SecretHeader == "" {
+		return fmt.Errorf("auth trustedProxy secretHeader is required when enabled")
+	}
+	if c.Auth.TrustedProxy.SecretValue == "" {
+		return fmt.Errorf("auth trustedProxy secretValue is required when enabled")
+	}
+
+	return nil
+}
+
+func (c *Config) validateAuthz() error {
 	if c.Authz.Enabled && c.Authz.Provider == "" {
 		return fmt.Errorf("authz provider is required when authorization is enabled")
 	}
@@ -360,6 +417,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func (c *Config) validateAudit() error {
 	if c.Audit.Enabled {
 		if c.Audit.Store == "" {
 			return fmt.Errorf("audit store is required when audit logging is enabled")
@@ -369,48 +430,87 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func (c *Config) validateBackends() error {
 	if len(c.Backends) == 0 {
 		return fmt.Errorf("at least one backend is required")
 	}
 
 	for name, backend := range c.Backends {
-		if backend.Endpoint == "" {
-			return fmt.Errorf("backend '%s' endpoint is required", name)
+		if err := c.validateBackend(name, backend); err != nil {
+			return err
 		}
-		if backend.Type == "" {
-			return fmt.Errorf("backend '%s' type is required", name)
+	}
+
+	return nil
+}
+
+func (c *Config) validateBackend(name string, backend BackendConfig) error {
+	if backend.Endpoint == "" {
+		return fmt.Errorf("backend '%s' endpoint is required", name)
+	}
+	if backend.Type == "" {
+		return fmt.Errorf("backend '%s' type is required", name)
+	}
+	if err := validateExternalPathPrefixes(name, backend); err != nil {
+		return err
+	}
+	if err := c.validateNamespaceRouting(name, backend); err != nil {
+		return err
+	}
+	if err := queryrewrite.Validate(name, backend.QueryRewrite); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateExternalPathPrefixes(name string, backend BackendConfig) error {
+	if len(backend.ExternalPathPrefixes) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(backend.ExternalHost) == "" {
+		return fmt.Errorf("backend '%s' externalHost is required when externalPathPrefixes are configured", name)
+	}
+	for _, prefix := range backend.ExternalPathPrefixes {
+		trimmedPrefix := strings.TrimSpace(prefix)
+		if trimmedPrefix == "" {
+			return fmt.Errorf("backend '%s' externalPathPrefixes cannot contain empty values", name)
 		}
-		if len(backend.ExternalPathPrefixes) > 0 {
-			if strings.TrimSpace(backend.ExternalHost) == "" {
-				return fmt.Errorf("backend '%s' externalHost is required when externalPathPrefixes are configured", name)
-			}
-			for _, prefix := range backend.ExternalPathPrefixes {
-				trimmedPrefix := strings.TrimSpace(prefix)
-				if trimmedPrefix == "" {
-					return fmt.Errorf("backend '%s' externalPathPrefixes cannot contain empty values", name)
-				}
-				if !strings.HasPrefix(trimmedPrefix, "/") {
-					return fmt.Errorf("backend '%s' externalPathPrefixes values must start with '/'", name)
-				}
-			}
+		if !strings.HasPrefix(trimmedPrefix, "/") {
+			return fmt.Errorf("backend '%s' externalPathPrefixes values must start with '/'", name)
 		}
-		if backend.NamespaceRouting != nil && backend.NamespaceRouting.Mode != "" {
-			switch backend.NamespaceRouting.Mode {
-			case "fixed":
-				if strings.TrimSpace(backend.Namespace) == "" {
-					return fmt.Errorf("backend '%s' namespace is required when namespaceRouting mode is fixed", name)
-				}
-			case "request":
-				if backend.NamespaceRouting.Parameter == "" {
-					return fmt.Errorf("backend '%s' namespaceRouting parameter is required when mode is request", name)
-				}
-				if strings.TrimSpace(backend.Namespace) != "" && !c.Authz.NamespaceClassifier.HasRules() {
-					return fmt.Errorf("backend '%s' namespace requires authz.namespaceClassifier when namespaceRouting mode is request", name)
-				}
-			default:
-				return fmt.Errorf("backend '%s' namespaceRouting mode must be one of: fixed, request", name)
-			}
+	}
+
+	return nil
+}
+
+func (c *Config) validateNamespaceRouting(name string, backend BackendConfig) error {
+	if backend.NamespaceRouting == nil || backend.NamespaceRouting.Mode == "" {
+		return nil
+	}
+
+	switch backend.NamespaceRouting.Mode {
+	case "fixed":
+		if strings.TrimSpace(backend.Namespace) == "" {
+			return fmt.Errorf("backend '%s' namespace is required when namespaceRouting mode is fixed", name)
 		}
+	case "request":
+		if backend.NamespaceRouting.Parameter == "" {
+			return fmt.Errorf("backend '%s' namespaceRouting parameter is required when mode is request", name)
+		}
+		switch strings.ToLower(strings.TrimSpace(backend.NamespaceRouting.Source)) {
+		case "", "query", "body", "both":
+		default:
+			return fmt.Errorf("backend '%s' namespaceRouting source must be one of: query, body, both", name)
+		}
+		if strings.TrimSpace(backend.Namespace) != "" && !c.Authz.NamespaceClassifier.HasRules() {
+			return fmt.Errorf("backend '%s' namespace requires authz.namespaceClassifier when namespaceRouting mode is request", name)
+		}
+	default:
+		return fmt.Errorf("backend '%s' namespaceRouting mode must be one of: fixed, request", name)
 	}
 
 	return nil

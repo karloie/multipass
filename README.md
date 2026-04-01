@@ -34,11 +34,14 @@ Multipass solves that at the edge:
 - **Data minimization** — keep identity, authorization, and audit decisions at the edge without pulling more backend data into Multipass than necessary
 - **Auditability** — access decisions logged in one place and easy to ship onward
 
-### Supported Applications
+### Backend Types
 
-- **jwt**: JWT-authenticated systems (LGTM, OpenSearch, Elasticsearch) - see [API.md](doc/API.md)
-- **prometheus**: Prometheus-compatible systems (Grafana, Loki, Mimir, Tempo, Thanos, VictoriaMetrics, Cortex, Prometheus, Alertmanager, Jaeger, SigNoz)
-- **web**: Header-authenticated web proxy (Grafana, Kibana, OpenSearch, VictoriaMetrics) - see [WEB.md](doc/WEB.md)
+- `prometheus`
+- `jwt`
+- `generic`
+- `web`
+
+See [doc/API.md](doc/API.md).
 
 ## Architecture
 
@@ -96,49 +99,13 @@ Requests are routed by backend name: `http://multipass:8080/<backend>/<path>`
 
 ## Deployment
 
-**Configure backends:**
-Edit [k8s/configmap.yaml](k8s/configmap.yaml) with your backend endpoints:
-
-```yaml
-backends:
-  loki:
-    type: prometheus
-    endpoint: http://loki.monitoring.svc.cluster.local:3100
-
-  opensearch:
-    type: jwt
-    endpoint: https://opensearch.logging.svc.cluster.local:9200
-```
-
-**Deploy to cluster:**
-```bash
-kubectl apply -f k8s/
-```
-
-**Deploy with in-cluster OIDC provider:**
-```bash
-kubectl apply -k k8s/oidc/
-```
-
-This overlay keeps Multipass on `oidc` and `token` while pointing OIDC at
-`oidc-provider.monitoring.svc.cluster.local:8081`.
-
-This creates:
-- **ConfigMap**: Backend configuration and OIDC settings
-- **Deployment**: 2 replicas with health checks, shared browser sessions, and resource limits
-- **Service**: ClusterIP service on port 8080
-
-**Verify:**
-```bash
-kubectl get pods -n monitoring -l app=multipass
-kubectl logs -n monitoring -l app=multipass
-```
+- edit [k8s/configmap.yaml](k8s/configmap.yaml)
+- deploy with `kubectl apply -f k8s/`
+- use `kubectl apply -k k8s/oidc/` for the in-cluster OIDC overlay
 
 ## Development
 
-See [doc/DEV.md](doc/DEV.md) for local development, testing, build modes, and release instructions.
-
-Use the external OIDC profile when you want Multipass to behave like production integrations.
+See [doc/DEV.md](doc/DEV.md).
 
 ## License
 

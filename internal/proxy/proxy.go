@@ -23,6 +23,7 @@ import (
 	"github.com/karloie/multipass/internal/auth"
 	"github.com/karloie/multipass/internal/authz"
 	"github.com/karloie/multipass/internal/config"
+	queryrewrite "github.com/karloie/multipass/internal/query"
 )
 
 // contextKey avoids context key collisions.
@@ -41,6 +42,12 @@ const (
 	headerBearerPrefix  = "Bearer "
 
 	queryParamNamespace = "namespace"
+
+	namespaceRoutingModeRequest = "request"
+	namespaceRoutingModeFixed   = "fixed"
+	namespaceRoutingSourceQuery = "query"
+	namespaceRoutingSourceBody  = "body"
+	namespaceRoutingSourceBoth  = "both"
 
 	defaultNamespace    = "default"
 	auditWriteTimeout   = 2 * time.Second
@@ -246,7 +253,16 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 	}
 
 	r = r.WithContext(context.WithValue(r.Context(), namespaceKey, namespace))
-	r = stripNamespaceRoutingQueryParam(r, resolved.config)
+	r, err = stripNamespaceRoutingQueryParam(r, resolved.config)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	r, err = rewriteBackendQuery(r, resolved, namespace)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if resolved.stripPrefix {
 		prefix := "/" + resolved.name
@@ -269,16 +285,41 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 	}
 }
 
+func rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace string) (*http.Request, error) {
+	if r == nil || !queryrewrite.HasRules(resolved.config.QueryRewrite) {
+		return r, nil
+	}
+
+	route := r.URL.Path
+	if resolved.stripPrefix {
+		route = strings.TrimPrefix(route, "/"+resolved.name)
+		if route == "" {
+			route = "/"
+		}
+	}
+
+	return queryrewrite.RewriteRequest(r, resolved.config.QueryRewrite, queryrewrite.Context{
+		Backend:   resolved.name,
+		Namespace: namespace,
+		Host:      r.Host,
+		Route:     route,
+		Method:    r.Method,
+	})
+}
+
 func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig config.BackendConfig, r *http.Request) (string, error) {
 	if backendConfig.NamespaceRouting != nil && backendConfig.NamespaceRouting.Mode != "" {
 		switch backendConfig.NamespaceRouting.Mode {
-		case "fixed":
+		case namespaceRoutingModeFixed:
 			return strings.TrimSpace(backendConfig.Namespace), nil
-		case "request":
+		case namespaceRoutingModeRequest:
 			if r == nil {
 				return "", fmt.Errorf(errMsgNamespaceMissing, backendConfig.NamespaceRouting.Parameter)
 			}
-			namespace := strings.TrimSpace(r.URL.Query().Get(backendConfig.NamespaceRouting.Parameter))
+			namespace, err := requestRoutingParameterValue(r, backendConfig.NamespaceRouting)
+			if err != nil {
+				return "", err
+			}
 			if namespace == "" {
 				return "", fmt.Errorf(errMsgNamespaceMissing, backendConfig.NamespaceRouting.Parameter)
 			}
@@ -299,16 +340,128 @@ func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig confi
 	return defaultNamespace, nil
 }
 
-func stripNamespaceRoutingQueryParam(r *http.Request, backendConfig config.BackendConfig) *http.Request {
-	if r == nil || backendConfig.NamespaceRouting == nil || backendConfig.NamespaceRouting.Mode != "request" {
-		return r
+func stripNamespaceRoutingQueryParam(r *http.Request, backendConfig config.BackendConfig) (*http.Request, error) {
+	if r == nil || backendConfig.NamespaceRouting == nil || backendConfig.NamespaceRouting.Mode != namespaceRoutingModeRequest {
+		return r, nil
 	}
 
 	cloned := r.Clone(r.Context())
 	cloned.URL = cloneURL(r.URL)
-	query := cloned.URL.Query()
-	query.Del(backendConfig.NamespaceRouting.Parameter)
-	cloned.URL.RawQuery = query.Encode()
+	if namespaceRoutingReadsQuery(backendConfig.NamespaceRouting) {
+		query := cloned.URL.Query()
+		query.Del(backendConfig.NamespaceRouting.Parameter)
+		cloned.URL.RawQuery = query.Encode()
+	}
+
+	if !namespaceRoutingReadsBody(backendConfig.NamespaceRouting) || !hasFormURLEncodedBody(r) {
+		return cloned, nil
+	}
+
+	bodyValues, err := readFormURLEncodedBodyValues(r)
+	if err != nil {
+		return nil, err
+	}
+	bodyValues.Del(backendConfig.NamespaceRouting.Parameter)
+	rewrittenBody := bodyValues.Encode()
+	cloned.Body = io.NopCloser(strings.NewReader(rewrittenBody))
+	cloned.ContentLength = int64(len(rewrittenBody))
+	cloned.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(rewrittenBody)), nil
+	}
+	cloned.PostForm = bodyValues
+	cloned.Form = cloneFormValues(bodyValues)
+
+	return cloned, nil
+}
+
+func requestRoutingParameterValue(r *http.Request, routing *config.NamespaceRoutingConfig) (string, error) {
+	if r == nil {
+		return "", nil
+	}
+	if namespaceRoutingReadsQuery(routing) {
+		if value := strings.TrimSpace(r.URL.Query().Get(routing.Parameter)); value != "" {
+			return value, nil
+		}
+	}
+	if !namespaceRoutingReadsBody(routing) || !hasFormURLEncodedBody(r) {
+		return "", nil
+	}
+	bodyValues, err := readFormURLEncodedBodyValues(r)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(bodyValues.Get(routing.Parameter)), nil
+}
+
+func namespaceRoutingReadsQuery(routing *config.NamespaceRoutingConfig) bool {
+	return namespaceRoutingUsesSource(routing, namespaceRoutingSourceQuery)
+}
+
+func namespaceRoutingReadsBody(routing *config.NamespaceRoutingConfig) bool {
+	return namespaceRoutingUsesSource(routing, namespaceRoutingSourceBody)
+}
+
+func namespaceRoutingUsesSource(routing *config.NamespaceRoutingConfig, source string) bool {
+	switch normalizedNamespaceRoutingSource(routing) {
+	case namespaceRoutingSourceBoth, source:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedNamespaceRoutingSource(routing *config.NamespaceRoutingConfig) string {
+	if routing == nil {
+		return namespaceRoutingSourceBoth
+	}
+	source := strings.ToLower(strings.TrimSpace(routing.Source))
+	if source == "" {
+		return namespaceRoutingSourceBoth
+	}
+	return source
+}
+
+func hasFormURLEncodedBody(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+	default:
+		return false
+	}
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get(headerContentType)))
+	return strings.HasPrefix(contentType, "application/x-www-form-urlencoded")
+}
+
+func readFormURLEncodedBodyValues(r *http.Request) (url.Values, error) {
+	if r == nil || r.Body == nil {
+		return url.Values{}, nil
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	if len(body) == 0 {
+		return url.Values{}, nil
+	}
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func cloneFormValues(values url.Values) url.Values {
+	if values == nil {
+		return url.Values{}
+	}
+	cloned := make(url.Values, len(values))
+	for key, items := range values {
+		cloned[key] = append([]string(nil), items...)
+	}
 	return cloned
 }
 

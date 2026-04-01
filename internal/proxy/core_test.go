@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +19,21 @@ import (
 	"github.com/karloie/multipass/internal/auth"
 	"github.com/karloie/multipass/internal/authz"
 	"github.com/karloie/multipass/internal/config"
+	queryrewrite "github.com/karloie/multipass/internal/query"
 )
+
+const testRequestRoutingParameter = "tm_namespace"
+
+func requestNamespaceRouting(source string) *config.NamespaceRoutingConfig {
+	routing := &config.NamespaceRoutingConfig{
+		Mode:      namespaceRoutingModeRequest,
+		Parameter: testRequestRoutingParameter,
+	}
+	if source != "" {
+		routing.Source = source
+	}
+	return routing
+}
 
 // createTestJWT creates a simple unsigned JWT for testing.
 // This exercises real JWT parsing code without requiring signature verification.
@@ -108,6 +123,7 @@ type capturedRequest struct {
 	Method   string
 	Path     string
 	RawQuery string
+	Body     string
 	Headers  http.Header
 }
 
@@ -135,6 +151,10 @@ type proxyTestCase struct {
 	backendNamespace         string
 	externalPathPrefixes     []string
 	trustedProxyConfig       *config.TrustedProxyConfig
+	queryRewrite             *queryrewrite.RewriteConfig
+	requestMethod            string
+	requestBody              string
+	requestContentType       string
 	requestPath              string
 	host                     string
 	authToken                string
@@ -157,6 +177,7 @@ type proxyTestCase struct {
 	expectBackendCall        bool
 	expectedBackendPath      string
 	expectedBackendQuery     string
+	expectedBackendBody      string
 	expectedAuditNamespace   string
 }
 
@@ -166,6 +187,8 @@ func captureBackend() (*httptest.Server, *capturedRequest) {
 		captured.Method = r.Method
 		captured.Path = r.URL.Path
 		captured.RawQuery = r.URL.RawQuery
+		body, _ := io.ReadAll(r.Body)
+		captured.Body = string(body)
 		captured.Headers = r.Header.Clone()
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -249,6 +272,7 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 			Endpoint:             backendServer.URL,
 			Namespace:            tt.backendNamespace,
 			NamespaceRouting:     tt.backendNamespaceRouting,
+			QueryRewrite:         tt.queryRewrite,
 			ExternalHost:         tt.host,
 			ExternalPathPrefixes: tt.externalPathPrefixes,
 			WebConfig:            tt.webConfig,
@@ -302,9 +326,20 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 		t.Fatalf("Failed to create proxy: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, tt.requestPath, nil)
+	requestMethod := tt.requestMethod
+	if requestMethod == "" {
+		requestMethod = http.MethodGet
+	}
+	var requestBody io.Reader
+	if tt.requestBody != "" {
+		requestBody = strings.NewReader(tt.requestBody)
+	}
+	req := httptest.NewRequest(requestMethod, tt.requestPath, requestBody)
 	if tt.host != "" {
 		req.Host = tt.host
+	}
+	if tt.requestContentType != "" {
+		req.Header.Set("Content-Type", tt.requestContentType)
 	}
 	if testToken != "" {
 		req.Header.Set("Authorization", "Bearer "+testToken)
@@ -362,6 +397,9 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 		}
 		if tt.expectedBackendQuery != "" && captured.RawQuery != tt.expectedBackendQuery {
 			t.Errorf("Expected backend query %q, got %q", tt.expectedBackendQuery, captured.RawQuery)
+		}
+		if tt.expectedBackendBody != "" && captured.Body != tt.expectedBackendBody {
+			t.Errorf("Expected backend body %q, got %q", tt.expectedBackendBody, captured.Body)
 		}
 	}
 
@@ -429,7 +467,7 @@ func deriveExpectedBackendPath(tt proxyTestCase) string {
 	return parsedURL.Path
 }
 
-func TestProxy_HealthEndpoint(t *testing.T) {
+func TestHealthEndpoint(t *testing.T) {
 	backendServer, _ := captureBackend()
 	defer backendServer.Close()
 
@@ -462,7 +500,7 @@ func TestProxy_HealthEndpoint(t *testing.T) {
 	}
 }
 
-func TestProxy_FixedBackendNamespaceOverridesRequestNamespace(t *testing.T) {
+func TestFixedBackendNamespaceOverridesRequestNamespace(t *testing.T) {
 	executeProxyTestCase(t, proxyTestCase{
 		name:                "fixed backend namespace wins over query parameter",
 		backendName:         "mimir",
@@ -482,7 +520,7 @@ func TestProxy_FixedBackendNamespaceOverridesRequestNamespace(t *testing.T) {
 	})
 }
 
-func TestProxy_ReadinessEndpoint(t *testing.T) {
+func TestReadinessEndpoint(t *testing.T) {
 	t.Run("ready when all backends respond", func(t *testing.T) {
 		backendServer, _ := captureBackend()
 		defer backendServer.Close()
