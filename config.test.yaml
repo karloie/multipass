@@ -1,0 +1,51 @@
+# Multipass Test Configuration
+# Full pipeline: Auth + Authz + Audit enabled.
+#
+# This file is a minimal valid test fixture for the runtime provider model.
+# Keep tests hermetic by using local fakes in Go tests rather than external
+# OIDC infrastructure.
+
+server:
+  port: 8080
+
+# Authentication
+auth:
+  provider: oidc
+  sessionTTL: 24h
+  sessionStore:
+    store: memory
+  oidc:
+    issuerUrl: https://issuer.example.com
+    clientId: multipass
+    clientSecret: test-secret
+    redirectUrl: https://multipass.example.com/login/generic_oauth
+
+# Authorization with namespace mapping
+authz:
+  enabled: true
+  provider: token
+  groupMappings:
+    dev-team-1:
+      - dev
+      - test
+    dev-team-2:
+      - staging
+    admin:
+      - "*"  # Access all namespaces
+    operator:
+      - prod
+
+# Audit logging (in-memory for testing)
+audit:
+  enabled: true
+  store: memory
+
+# Backend observability systems
+backends:
+  loki:
+    type: prometheus
+    endpoint: http://localhost:3100
+  
+  mimir:
+    type: prometheus
+    endpoint: http://localhost:8080

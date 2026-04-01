@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multipass-proxy
+  namespace: monitoring
+  labels:
+    app: multipass-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: multipass-proxy
+  template:
+    metadata:
+      labels:
+        app: multipass-proxy
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: multipass
+        image: karloie/multipass:dev
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        args:
+        - -config
+        - /etc/multipass/config.yaml
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        volumeMounts:
+        - name: config
+          mountPath: /etc/multipass
+          readOnly: true
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          failureThreshold: 12
+          periodSeconds: 5
+          timeoutSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 30
+          timeoutSeconds: 2
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+      volumes:
+      - name: config
+        configMap:
+          name: multipass-config

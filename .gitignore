@@ -1,0 +1,36 @@
+# Binaries
+/multipass
+/multipass-dev
+/multipass-*-*
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Release artifacts
+checksums.txt
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Config (may contain secrets)
+config.yaml
+!config.example.yaml
+
+# Database
+*.db
+*.sqlite

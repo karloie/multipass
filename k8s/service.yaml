@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: multipass-proxy
+  namespace: monitoring
+  labels:
+    app: multipass-proxy
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app: multipass-proxy

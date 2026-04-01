@@ -1,0 +1,22 @@
+name: Release new tag
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  ci:
+    uses: karloie/shipkit/.github/workflows/release.yml@v0.0.76
+    with:
+      mode: release
+      event_name: ${{ github.event_name }}
+      tool_ref: v0.0.76
+      image: karloie/multipass
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

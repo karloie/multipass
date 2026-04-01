@@ -1,0 +1,327 @@
+# Multipass Gateway Configuration
+
+server:
+  port: 8080
+
+# Authentication is always required.
+# Use config.oidc.yaml for local external OIDC examples.
+auth:
+  provider: oidc
+  sessionTTL: 24h
+  sessionStore:
+    store: memory
+
+  # Optional: trust Grafana datasource proxy requests for API backends.
+  # Requires Grafana [dataproxy] send_user_header=true and a matching static header
+  # on each Multipass-backed datasource.
+  # trustedProxy:
+  #   enabled: true
+  #   userHeader: X-Grafana-User
+  #   secretHeader: X-Multipass-Proxy-Secret
+  #   secretValue: change-me
+  
+  # OIDC provider (ForgeRock AM, Keycloak, Auth0, etc.)
+  oidc:
+    providerName: forgerock  # For logging
+    issuerUrl: https://forgerock.example.com/oauth2
+    clientId: multipass-client
+    clientSecret: your-secret-here
+    redirectUrl: http://localhost:8080/login/generic_oauth
+    # Defaults to Grafana-style browser routes. Override when you want a different shape.
+    # loginPath: /login
+    # callbackPath: /login/generic_oauth
+    # logoutPath: /logout
+    # postLogoutRedirectUrl: http://localhost:8080/login
+    scopes:
+      - openid
+      - profile
+      - email
+  
+# Map user groups to allowed namespaces
+authz:
+  enabled: false  # Set to true to enforce namespace access control
+  provider: token
+
+  # Token authz provider: uses the validated token's groups claim directly.
+  # This is the simplest option when your IdP already emits the exact groups
+  # Multipass should authorize against.
+  # provider: token
+
+  # With a normal OIDC setup, `token` is enough: validated
+  # token groups become the source of namespace authorization.
+
+  # Group -> Namespace mappings
+  groupMappings:
+    team-platform:
+      - dev
+      - test
+      - prod
+    Kubernetes Admin - Test:
+      - default
+      - monitoring
+    Kubernetes Les - Test:
+      - default
+      - monitoring
+    Team Applikasjonsplattform:
+      - default
+      - monitoring
+    Contributor:
+      - default
+      - monitoring
+    Owner:
+      - default
+      - monitoring
+    Reader:
+      - default
+      - monitoring
+    team-product:
+      - product-dev
+      - product-prod
+    admins:
+      - "*"  # Access all namespaces
+    developers:
+      - dev
+      - test
+    operators:
+      - prod
+
+  # Example rollout for namespace-scoped observability access.
+  # Use fixed backend aliases together with matching namespace grants so
+  # Grafana datasources can point at Multipass and Multipass becomes the
+  # authoritative gate for reads.
+  # groupMappings:
+  #   Team UTV:
+  #     - utv
+  #   Team Monitoring:
+  #     - monitoring
+  #   Team Applikasjonsplattform:
+  #     - applikasjonsplattform
+  #   Reader:
+  #     - monitoring
+  #   Contributor:
+  #     - utv
+  #     - applikasjonsplattform
+
+# === Audit Logging ===
+# Log all access attempts for compliance and security analysis
+audit:
+  enabled: false  # Set to true to enable audit logging
+  store: memory
+  
+  # Memory store: No configuration needed (ephemeral, lost on restart)
+  # Use for local development and debugging
+
+# Backend observability systems
+# Requests are routed as: http://multipass:8080/<backend>/<path>
+# Host-based backends can also share one external hostname when each backend
+# declares distinct externalPathPrefixes.
+backends:
+  # Prometheus stack
+  # Type: prometheus - automatically injects X-Scope-OrgID header with namespace
+  loki:
+    type: prometheus
+    endpoint: http://loki.monitoring.svc.cluster.local:3100
+    # namespace: monitoring  # Optional fixed namespace; ignores caller-supplied ?namespace=
+    # readinessUrl: http://loki.monitoring.svc.cluster.local:3100/ready
+    # Optional static headers (X-Scope-OrgID will be added dynamically)
+    # headers:
+    #   X-Custom-Header: "value"
+  
+  mimir:
+    type: prometheus
+    endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+    # namespace: monitoring
+    # namespaceRouting:
+    #   mode: request
+    #   parameter: tm_namespace
+  
+  tempo:
+    type: prometheus
+    endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
+    # namespace: monitoring
+
+  # Shared OTLP host example.
+  # Requests for https://otlp.example.com/otlp/v1/metrics go to mimir-otlp.
+  # Requests for https://otlp.example.com/otlp/v1/logs go to loki-otlp.
+  # Requests for https://otlp.example.com/otlp/v1/traces go to tempo-otlp.
+  # mimir-otlp:
+  #   type: generic
+  #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+  #   externalHost: otlp.example.com
+  #   externalPathPrefixes:
+  #     - /otlp/v1/metrics
+  #
+  # loki-otlp:
+  #   type: generic
+  #   endpoint: http://loki.monitoring.svc.cluster.local:3100
+  #   externalHost: otlp.example.com
+  #   externalPathPrefixes:
+  #     - /otlp/v1/logs
+  #
+  # tempo-otlp:
+  #   type: generic
+  #   endpoint: http://tempo-distributor.monitoring.svc.cluster.local:4318
+  #   externalHost: otlp.example.com
+  #   externalPathPrefixes:
+  #     - /otlp/v1/traces
+
+  # Phase 1 single-backend routing example.
+  # Multipass reads tm_namespace from the request, authorizes it against the
+  # caller's allowed namespaces, strips the parameter before proxying, and
+  # forwards the request with X-Scope-OrgID set to that namespace.
+  # mimir-shared:
+  #   type: prometheus
+  #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+  #   namespaceRouting:
+  #     mode: request
+  #     parameter: tm_namespace
+
+  # Request routing can also classify raw Kubernetes namespaces into a
+  # cluster scope when authz.namespaceClassifier is configured. In that mode,
+  # backend.namespace is used as the cluster prefix for the resulting scope.
+  # mimir-core-test:
+  #   type: prometheus
+  #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+  #   namespace: core-test
+  #   namespaceRouting:
+  #     mode: request
+  #     parameter: tm_namespace
+
+  # Example fixed-namespace aliases for a first rollout.
+  # Each alias is bound to one namespace. Caller-supplied ?namespace=
+  # values are ignored for these routes.
+  # loki-utv:
+  #   type: prometheus
+  #   endpoint: http://loki.monitoring.svc.cluster.local:3100
+  #   namespace: utv
+  #
+  # loki-monitoring:
+  #   type: prometheus
+  #   endpoint: http://loki.monitoring.svc.cluster.local:3100
+  #   namespace: monitoring
+  #
+  # loki-applikasjonsplattform:
+  #   type: prometheus
+  #   endpoint: http://loki.monitoring.svc.cluster.local:3100
+  #   namespace: applikasjonsplattform
+  #
+  # mimir-utv:
+  #   type: prometheus
+  #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+  #   namespace: utv
+  #
+  # mimir-monitoring:
+  #   type: prometheus
+  #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+  #   namespace: monitoring
+  #
+  # mimir-applikasjonsplattform:
+  #   type: prometheus
+  #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+  #   namespace: applikasjonsplattform
+  #
+  # tempo-utv:
+  #   type: prometheus
+  #   endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
+  #   namespace: utv
+  #
+  # tempo-monitoring:
+  #   type: prometheus
+  #   endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
+  #   namespace: monitoring
+  #
+  # tempo-applikasjonsplattform:
+  #   type: prometheus
+  #   endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
+  #   namespace: applikasjonsplattform
+  
+  grafana:
+    type: prometheus
+    endpoint: http://grafana.monitoring.svc.cluster.local:3000
+
+  # === Prometheus / VictoriaMetrics ===
+  # Type: prometheus - injects X-Scope-OrgID for multi-tenancy
+  # prometheus:
+  #   type: prometheus
+  #   endpoint: http://prometheus.monitoring.svc.cluster.local:9090
+  
+  # victoriametrics:
+  #   type: prometheus
+  #   endpoint: http://victoriametrics.monitoring.svc.cluster.local:8428
+
+  # === OpenSearch / Elasticsearch ===
+  # Type: jwt - passes through user's JWT for native RBAC
+  # opensearch:
+  #   type: jwt
+  #   endpoint: http://opensearch.monitoring.svc.cluster.local:9200
+  #   # No X-Scope-OrgID - JWT passthrough handles multi-tenancy
+
+  # === Generic Backend ===
+  # Type: generic - only static headers, no dynamic injection
+  # jaeger:
+  #   type: generic
+  #   endpoint: http://jaeger.monitoring.svc.cluster.local:16686
+  #   headers:
+  #     X-Custom-Header: "static-value"
+
+  # === Web Backends (Web dashboards with auth proxy) ===
+  # Type: web - injects user identity headers for header-based authentication
+  # Grafana, Kibana, and other dashboards can use these headers for SSO
+  
+  # Grafana with auth.proxy mode
+  # grafana-web:
+  #   type: web
+  #   endpoint: http://grafana.monitoring.svc.cluster.local:3000
+  #   readinessUrl: http://grafana.monitoring.svc.cluster.local:3000/api/health
+  #   webConfig:
+  #     userHeader: X-WEBAUTH-USER    # Required: user ID/username
+  #     emailHeader: X-WEBAUTH-EMAIL  # Optional: user email
+  #     nameHeader: X-WEBAUTH-NAME    # Optional: display name
+  #     groupsHeader: X-WEBAUTH-GROUP # Optional: comma-separated groups (authz groups or JWT groups)
+  #     roleHeader: X-WEBAUTH-ROLE    # Optional: backend-native role header
+  #     roleMappings:
+  #       App-Grafana-Admins: GrafanaAdmin
+  #       App-Grafana-Editors: Editor
+  #
+  # Configure Grafana with:
+  #   [auth.proxy]
+  #   enabled = true
+  #   header_name = X-WEBAUTH-USER
+  #   header_property = username
+  #   auto_sign_up = true
+  #   # Map groups to Grafana roles
+  #   headers = Group:X-WEBAUTH-GROUP
+  
+  # OpenSearch Dashboards with proxy authentication
+  # opensearch-dashboards:
+  #   type: web
+  #   endpoint: http://opensearch-dashboards.logging.svc.cluster.local:5601
+  #   readinessUrl: http://opensearch-dashboards.logging.svc.cluster.local:5601/api/status
+  #   webConfig:
+  #     userHeader: X-Authenticated-User
+  #     emailHeader: X-Authenticated-Email
+  #     groupsHeader: X-Authenticated-Roles  # OpenSearch expects roles, map from groups
+  #
+  # Configure OpenSearch Security with:
+  #   opensearch_security.auth.type: "proxy"
+  #   opensearch_security.auth.proxy.header: "X-Authenticated-User"
+  #   opensearch_security.auth.proxy.roles_header: "X-Authenticated-Roles"
+  
+  # VictoriaMetrics UI (vmui) with auth proxy
+  # victoriametrics-web:
+  #   type: web
+  #   endpoint: http://victoriametrics.monitoring.svc.cluster.local:8428
+  #   webConfig:
+  #     userHeader: X-Scope-User
+  #
+  # VictoriaMetrics vmui reads X-Scope-User for multi-tenancy display
+  
+  # Kibana with reverse proxy authentication
+  # kibana-web:
+  #   type: web
+  #   endpoint: http://kibana.logging.svc.cluster.local:5601
+  #   webConfig:
+  #     userHeader: X-Proxy-User
+  #     emailHeader: X-Proxy-Email
+  #
+  # Configure Kibana with anonymous authentication and request headers

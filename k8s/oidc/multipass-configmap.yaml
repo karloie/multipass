@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multipass-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    server:
+      port: 8080
+
+    auth:
+      provider: oidc
+      sessionTTL: 24h
+      sessionStore:
+        store: memory
+      oidc:
+        providerName: forgerock
+        issuerUrl: http://oidc-provider.monitoring.svc.cluster.local:8081
+        clientId: multipass
+        clientSecret: ignored-by-local-oidc
+        redirectUrl: http://multipass-proxy.monitoring.svc.cluster.local:8080/login/generic_oauth
+        scopes:
+          - openid
+          - profile
+          - email
+
+    authz:
+      enabled: true
+      provider: token
+      groupMappings:
+        Team Applikasjonsplattform:
+          - default
+          - monitoring
+        Kubernetes Les - Test:
+          - default
+          - monitoring
+        Reader:
+          - default
+          - monitoring
+        Contributor:
+          - default
+          - monitoring
+        Owner:
+          - default
+          - monitoring
+
+    audit:
+      enabled: true
+      store: memory
+
+    backends:
+      loki:
+        type: prometheus
+        endpoint: http://loki.monitoring.svc.cluster.local:3100
+
+      mimir:
+        type: prometheus
+        endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+
+      tempo:
+        type: prometheus
+        endpoint: http://tempo.monitoring.svc.cluster.local:3100
+
+      opensearch:
+        type: jwt
+        endpoint: https://opensearch.logging.svc.cluster.local:9200
+
+      grafana-web:
+        type: web
+        endpoint: http://grafana.monitoring.svc.cluster.local:3000
+        readinessUrl: http://grafana.monitoring.svc.cluster.local:3000/api/health
+        webConfig:
+          userHeader: X-WEBAUTH-USER
+          emailHeader: X-WEBAUTH-EMAIL
+          nameHeader: X-WEBAUTH-NAME
+          groupsHeader: X-WEBAUTH-GROUP
+
+      kibana-web:
+        type: web
+        endpoint: http://kibana.logging.svc.cluster.local:5601
+        readinessUrl: http://kibana.logging.svc.cluster.local:5601/api/status
+        webConfig:
+          userHeader: X-Forwarded-User
+          emailHeader: X-Forwarded-Email
+          nameHeader: X-Forwarded-Preferred-Username
+          groupsHeader: X-Forwarded-Groups
+
+      victoria:
+        type: generic
+        endpoint: http://victoria.monitoring.svc.cluster.local:8428
+        headers:
+          X-Custom-Header: "custom-value"

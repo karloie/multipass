@@ -1,0 +1,56 @@
+# Git
+.git/
+.gitignore
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in image)
+README.md
+doc/
+*.md
+
+# Test files
+*_test.go
+testdata/
+
+# Go test artifacts
+*.test
+*.out
+coverage.out
+
+# Build artifacts (we build inside Docker)
+/multipass
+/multipass-dev
+/multipass-prod
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Config files (use volume mounts)
+config.yaml
+config.test.yaml
+# Keep config.example.yaml for reference
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Kubernetes manifests (deployed separately)
+k8s/
+
+# Development files
+Makefile
+notes.txt
+
+# Backup and temporary files
+*.tgz
+*.tar.gz
+*.zip
+*.bak
+*.tmp

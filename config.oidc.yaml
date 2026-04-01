@@ -1,0 +1,63 @@
+# Multipass development profile for an external OIDC provider.
+#
+# This keeps Multipass on its normal providers:
+# - auth.provider: oidc
+# - authz.provider: token
+#
+# Switching to real OIDC should only require issuer and client changes.
+
+server:
+  port: 8080
+
+auth:
+  provider: oidc
+  sessionTTL: 24h
+  sessionStore:
+    store: memory
+  oidc:
+    providerName: forgerock
+    issuerUrl: http://localhost:8081
+    clientId: multipass
+    clientSecret: ignored-by-local-oidc
+    redirectUrl: http://localhost:8080/login/generic_oauth
+    scopes:
+      - openid
+      - profile
+      - email
+
+authz:
+  enabled: true
+  provider: token
+  groupMappings:
+    Team Applikasjonsplattform:
+      - default
+      - monitoring
+    Kubernetes Les - Test:
+      - default
+      - monitoring
+    Reader:
+      - default
+      - monitoring
+    Contributor:
+      - default
+      - monitoring
+    Owner:
+      - default
+      - monitoring
+
+audit:
+  enabled: false
+  store: memory
+
+backends:
+  loki:
+    type: prometheus
+    endpoint: http://localhost:3100
+
+  mimir:
+    type: prometheus
+    endpoint: http://localhost:9009
+
+  tempo:
+    type: prometheus
+    endpoint: http://localhost:3200

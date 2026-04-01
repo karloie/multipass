@@ -1,0 +1,19 @@
+name: Re-release latest tag
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  rerelease:
+    uses: karloie/shipkit/.github/workflows/release.yml@v0.0.76
+    with:
+      mode: rerelease
+      tool_ref: v0.0.76
+      image: karloie/multipass
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
