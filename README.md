@@ -44,41 +44,33 @@ Multipass solves that at the edge:
 
 Multipass sits both in front of Grafana for browser sign-in and on the datasource path between Grafana or API clients and the LGTM backends.
 
-<div align="center">
-<pre>
-Browser users                      OIDC provider
-   |                                    ^
-   | web login + session                |
-   v                                    |
-+-----------------+                     |
-|    Multipass    |---------------------+
-|  browser edge   |
-+-----------------+
-      |
-      | trusted user headers
-      v
-    +---------+
-    | Grafana |
-    +---------+
-      |
-      | datasource proxy
-      v
-+-----------------+                     +------------+
-|    Multipass    |-------------------->| Audit sink |
-| datasource edge |                     +------------+
-+-----------------+
-    |      |      |
-    v      v      v
-  +------+ +-------+ +-------+
-  | Loki | | Mimir | | Tempo |
-  +------+ +-------+ +-------+
-
-CLI and automation clients can also use the same API path directly:
-
-   clients -----> Multipass -----> LGTM APIs
-</pre>
-</div>
-
+```
+        Browser users                OIDC provider
+            |                              ^
+            | web login + session          |
+            v                              |
+    +-----------------+                    |
+    |    Multipass    |--------------------+
+    |  browser edge   |
+    +-----------------+
+            |
+            | trusted user headers
+            v
+        +---------+
+        | Grafana |
+        +---------+
+            |
+            | datasource proxy
+            v
+  +-------------------+        +------------+
+  |     Multipass     |------->| Audit sink |
+  |  datasource edge  |        +------------+
+  +-------------------+
+    v       v       v
++------+ +-------+ +-------+
+| Loki | | Mimir | | Tempo |
++------+ +-------+ +-------+
+```
 ## Configuration
 
 See [config.example.yaml](config.example.yaml) for complete examples.
