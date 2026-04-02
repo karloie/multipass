@@ -221,6 +221,50 @@ func TestResponseRecorderSupportsOptionalInterfaces(t *testing.T) {
 	}
 }
 
+func TestResolveNamespaceAliases(t *testing.T) {
+	tests := []struct {
+		name         string
+		localCluster string
+		namespace    string
+		want         string
+	}{
+		{name: "leaves namespace unchanged without local cluster", namespace: "local.dev|local.ops", want: "local.dev|local.ops"},
+		{name: "expands local alias", localCluster: "mgmt-plat", namespace: "local.dev|local.ops", want: "mgmt-plat.dev|mgmt-plat.ops"},
+		{name: "expands mixed aliases", localCluster: "mgmt-plat", namespace: "local.dev|core.ops", want: "mgmt-plat.dev|core.ops"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveNamespaceAliases(config.AuthzConfig{LocalCluster: tt.localCluster}, tt.namespace)
+			if got != tt.want {
+				t.Fatalf("unexpected namespace resolution: got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasNamespaceAccess(t *testing.T) {
+	tests := []struct {
+		name      string
+		allowed   []string
+		namespace string
+		want      bool
+	}{
+		{name: "single exact namespace", allowed: []string{"mgmt-plat.dev"}, namespace: "mgmt-plat.dev", want: true},
+		{name: "multi namespace requires all scopes", allowed: []string{"mgmt-plat.dev"}, namespace: "mgmt-plat.dev|mgmt-plat.ops", want: false},
+		{name: "multi namespace exact all scopes", allowed: []string{"mgmt-plat.dev", "mgmt-plat.ops"}, namespace: "mgmt-plat.dev|mgmt-plat.ops", want: true},
+		{name: "wildcard matches multi namespace", allowed: []string{"*"}, namespace: "mgmt-plat.dev|mgmt-plat.ops", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasNamespaceAccess(tt.allowed, tt.namespace); got != tt.want {
+				t.Fatalf("unexpected namespace access result: got %v want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 	t.Helper()
 

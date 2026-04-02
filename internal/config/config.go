@@ -127,6 +127,7 @@ type AuthzConfig struct {
 	Enabled             bool                      `yaml:"enabled"`       // Enable authorization
 	Provider            string                    `yaml:"provider"`      // "token"
 	GroupMappings       map[string][]string       `yaml:"groupMappings"` // group -> namespaces
+	LocalCluster        string                    `yaml:"localCluster,omitempty"`
 	ClusterResolver     ClusterResolverConfig     `yaml:"clusterResolver,omitempty"`
 	NamespaceClassifier NamespaceClassifierConfig `yaml:"namespaceClassifier,omitempty"`
 }

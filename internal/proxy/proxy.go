@@ -344,16 +344,42 @@ func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig confi
 		}
 	}
 	if namespace := strings.TrimSpace(backendConfig.Namespace); namespace != "" {
-		return namespace, nil
+		return resolveNamespaceAliases(authzConfig, namespace), nil
 	}
 	if r != nil {
 		if namespace := strings.TrimSpace(r.URL.Query().Get(queryParamNamespace)); namespace != "" {
-			return namespace, nil
+			return resolveNamespaceAliases(authzConfig, namespace), nil
 		}
 	}
 	return defaultNamespace, nil
 }
 
+func resolveNamespaceAliases(authzConfig config.AuthzConfig, namespace string) string {
+	localCluster := strings.TrimSpace(authzConfig.LocalCluster)
+	if namespace == "" || localCluster == "" {
+		return namespace
+	}
+
+	parts := strings.Split(namespace, "|")
+	resolved := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed == "local" {
+			resolved = append(resolved, localCluster)
+			continue
+		}
+		if strings.HasPrefix(trimmed, "local.") {
+			resolved = append(resolved, localCluster+strings.TrimPrefix(trimmed, "local"))
+			continue
+		}
+		resolved = append(resolved, trimmed)
+	}
+
+	return strings.Join(resolved, "|")
+}
 func stripNamespaceRoutingQueryParam(r *http.Request, backendConfig config.BackendConfig) (*http.Request, error) {
 	if r == nil || backendConfig.NamespaceRouting == nil || backendConfig.NamespaceRouting.Mode != namespaceRoutingModeRequest {
 		return r, nil
@@ -681,12 +707,32 @@ func (r *responseRecorder) Unwrap() http.ResponseWriter {
 
 // hasNamespaceAccess checks if the allowed namespaces list contains the requested namespace
 func hasNamespaceAccess(allowedNamespaces []string, namespace string) bool {
+	requestedNamespaces := strings.Split(namespace, "|")
+	allowed := make(map[string]struct{}, len(allowedNamespaces))
 	for _, ns := range allowedNamespaces {
-		if ns == namespace || ns == "*" {
+		trimmed := strings.TrimSpace(ns)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed == "*" {
 			return true
 		}
+		allowed[trimmed] = struct{}{}
 	}
-	return false
+
+	matched := false
+	for _, requested := range requestedNamespaces {
+		trimmed := strings.TrimSpace(requested)
+		if trimmed == "" {
+			continue
+		}
+		matched = true
+		if _, ok := allowed[trimmed]; !ok {
+			return false
+		}
+	}
+
+	return matched
 }
 
 // ServeHTTP implements http.Handler

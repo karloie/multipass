@@ -83,3 +83,25 @@ func TestPolicyEvaluatorCacheExpires(t *testing.T) {
 		t.Fatalf("expected cache miss after expiry, got groups=%d elevated_roles=%d", provider.groupCalls, provider.elevatedRoleCalls)
 	}
 }
+
+func TestNamespacesAllowed(t *testing.T) {
+	tests := []struct {
+		name      string
+		allowed   []string
+		namespace string
+		want      bool
+	}{
+		{name: "single namespace exact match", allowed: []string{"core.dev"}, namespace: "core.dev", want: true},
+		{name: "multi namespace requires all parts", allowed: []string{"core.dev"}, namespace: "core.dev|core.ops", want: false},
+		{name: "multi namespace exact all parts", allowed: []string{"core.dev", "core.ops"}, namespace: "core.dev|core.ops", want: true},
+		{name: "wildcard allows all", allowed: []string{"*"}, namespace: "local.dev|local.ops", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := namespacesAllowed(tt.allowed, tt.namespace); got != tt.want {
+				t.Fatalf("unexpected access result: got %v want %v", got, tt.want)
+			}
+		})
+	}
+}

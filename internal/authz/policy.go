@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -95,13 +96,47 @@ func (p *PolicyEvaluator) CanAccessNamespace(ctx context.Context, userInfo *auth
 		return false, err
 	}
 
-	for _, ns := range perm.AllowedNamespaces {
-		if ns == namespace || ns == "*" {
-			return true, nil
+	return namespacesAllowed(perm.AllowedNamespaces, namespace), nil
+}
+
+func namespacesAllowed(allowedNamespaces []string, namespace string) bool {
+	requestedNamespaces := splitNamespaces(namespace)
+	if len(requestedNamespaces) == 0 {
+		return false
+	}
+
+	allowed := make(map[string]struct{}, len(allowedNamespaces))
+	for _, ns := range allowedNamespaces {
+		trimmed := strings.TrimSpace(ns)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed == "*" {
+			return true
+		}
+		allowed[trimmed] = struct{}{}
+	}
+
+	for _, requested := range requestedNamespaces {
+		if _, ok := allowed[requested]; !ok {
+			return false
 		}
 	}
 
-	return false, nil
+	return true
+}
+
+func splitNamespaces(namespace string) []string {
+	parts := strings.Split(namespace, "|")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
 }
 
 func permissionCacheKey(userInfo *auth.UserInfo) string {
