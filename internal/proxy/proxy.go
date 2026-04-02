@@ -221,7 +221,7 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 
 	userInfo, _ := r.Context().Value(userInfoKey).(*auth.UserInfo)
 
-	namespace, err := resolveRequestNamespace(p.config.Authz, resolved.config, r)
+	namespace, err := resolveRequestNamespace(p.config.Authz, resolved.config, userInfo, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -307,7 +307,7 @@ func rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace st
 	})
 }
 
-func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig config.BackendConfig, r *http.Request) (string, error) {
+func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig config.BackendConfig, userInfo *auth.UserInfo, r *http.Request) (string, error) {
 	if backendConfig.NamespaceRouting != nil && backendConfig.NamespaceRouting.Mode != "" {
 		switch backendConfig.NamespaceRouting.Mode {
 		case namespaceRoutingModeFixed:
@@ -325,6 +325,20 @@ func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig confi
 			}
 			if strings.TrimSpace(backendConfig.Namespace) != "" && authzConfig.NamespaceClassifier.HasRules() {
 				return authzConfig.NamespaceClassifier.Classify(backendConfig.Namespace, namespace), nil
+			}
+			if authzConfig.NamespaceClassifier.HasRules() && authzConfig.ClusterResolver.HasMappings() {
+				cluster := authzConfig.ClusterResolver.ResolveCluster(userInfo)
+				if cluster == "" {
+					return "", fmt.Errorf("unable to resolve cluster for request namespace routing")
+				}
+				return authzConfig.NamespaceClassifier.Classify(cluster, namespace), nil
+			}
+			if authzConfig.ClusterResolver.HasMappings() {
+				cluster := authzConfig.ClusterResolver.ResolveCluster(userInfo)
+				if cluster == "" {
+					return "", fmt.Errorf("unable to resolve cluster for request namespace routing")
+				}
+				return cluster + "." + strings.ToLower(strings.TrimSpace(namespace)), nil
 			}
 			return namespace, nil
 		}
@@ -525,7 +539,7 @@ func (p *Proxy) requestLogger(next http.Handler) http.Handler {
 
 		next.ServeHTTP(recorder, r)
 
-		slog.InfoContext(r.Context(), "http_request",
+		attributes := []any{
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.String("query", r.URL.RawQuery),
@@ -533,7 +547,14 @@ func (p *Proxy) requestLogger(next http.Handler) http.Handler {
 			slog.Duration("duration", time.Since(start)),
 			slog.String("request_id", middleware.GetReqID(r.Context())),
 			slog.String("remote_addr", r.RemoteAddr),
-		)
+		}
+
+		if isProbePath(r.URL.Path) {
+			slog.DebugContext(r.Context(), "http_request", attributes...)
+			return
+		}
+
+		slog.InfoContext(r.Context(), "http_request", attributes...)
 	})
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -198,6 +199,9 @@ func TestHandlerReportsCurrentUserGroups(t *testing.T) {
 	if len(got.CurrentUser.Groups) != 2 {
 		t.Fatalf("expected 2 active groups, got %+v", got.CurrentUser.Groups)
 	}
+	if !reflect.DeepEqual(got.CurrentUser.RawAllowedNamespaces, []string{"default", "monitoring"}) {
+		t.Fatalf("expected raw namespaces, got %+v", got.CurrentUser.RawAllowedNamespaces)
+	}
 	if len(got.CurrentUser.AllowedNamespaces) != 2 {
 		t.Fatalf("expected 2 namespaces, got %+v", got.CurrentUser.AllowedNamespaces)
 	}
@@ -207,6 +211,158 @@ func TestHandlerReportsCurrentUserGroups(t *testing.T) {
 	if got.CurrentUser.PermissionsError != "" {
 		t.Fatalf("expected no permission error, got %q", got.CurrentUser.PermissionsError)
 	}
+}
+
+func TestHandlerReportsDerivedAllowedNamespaces(t *testing.T) {
+	cfg := &config.Config{
+		Auth: config.AuthConfig{Provider: "oidc"},
+		Authz: config.AuthzConfig{
+			Enabled:  true,
+			Provider: "token",
+			ClusterResolver: config.ClusterResolverConfig{
+				Source: "user",
+				Mappings: map[string]string{
+					"otel-collector-core-test": "core-test",
+				},
+			},
+			NamespaceClassifier: config.NamespaceClassifierConfig{
+				DefaultSegment: "dev",
+				OpsExact:       []string{"argocd"},
+			},
+		},
+	}
+
+	handler := &Handler{
+		config: cfg,
+		browserAuth: fakeBrowserAuthenticator{user: &auth.UserInfo{
+			ID: "otel-collector-core-test",
+		}},
+		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
+			AllowedNamespaces: []string{"argocd", "team-a"},
+		}},
+		httpClient: &http.Client{},
+	}
+
+	got := executeStatusRequest(t, handler)
+	wantRawNamespaces := []string{"argocd", "team-a"}
+	wantNamespaces := []string{"core-test.dev", "core-test.ops"}
+	if !reflect.DeepEqual(got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces) {
+		t.Fatalf("unexpected raw namespaces: got %+v want %+v", got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces)
+	}
+	if !reflect.DeepEqual(got.CurrentUser.AllowedNamespaces, wantNamespaces) {
+		t.Fatalf("unexpected derived namespaces: got %+v want %+v", got.CurrentUser.AllowedNamespaces, wantNamespaces)
+	}
+}
+
+func TestHandlerKeepsDerivedAllowedNamespacesStable(t *testing.T) {
+	cfg := &config.Config{
+		Auth: config.AuthConfig{Provider: "oidc"},
+		Authz: config.AuthzConfig{
+			Enabled:  true,
+			Provider: "token",
+			ClusterResolver: config.ClusterResolverConfig{
+				Source: "user",
+				Mappings: map[string]string{
+					"otel-collector-core-test": "core-test",
+				},
+			},
+			NamespaceClassifier: config.NamespaceClassifierConfig{
+				DefaultSegment: "dev",
+				OpsExact:       []string{"argocd"},
+			},
+		},
+	}
+
+	handler := &Handler{
+		config: cfg,
+		browserAuth: fakeBrowserAuthenticator{user: &auth.UserInfo{
+			ID: "otel-collector-core-test",
+		}},
+		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
+			AllowedNamespaces: []string{"core-test.ops"},
+		}},
+		httpClient: &http.Client{},
+	}
+
+	got := executeStatusRequest(t, handler)
+	wantRawNamespaces := []string{"core-test.ops"}
+	wantNamespaces := []string{"core-test.ops"}
+	if !reflect.DeepEqual(got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces) {
+		t.Fatalf("unexpected raw namespaces: got %+v want %+v", got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces)
+	}
+	if !reflect.DeepEqual(got.CurrentUser.AllowedNamespaces, wantNamespaces) {
+		t.Fatalf("unexpected stable namespaces: got %+v want %+v", got.CurrentUser.AllowedNamespaces, wantNamespaces)
+	}
+}
+
+func TestHandlerDerivesAllowedNamespacesFromBackendCluster(t *testing.T) {
+	cfg := &config.Config{
+		Auth: config.AuthConfig{Provider: "oidc"},
+		Authz: config.AuthzConfig{
+			Enabled:  true,
+			Provider: "token",
+			NamespaceClassifier: config.NamespaceClassifierConfig{
+				DefaultSegment: "dev",
+				OpsExact:       []string{"monitoring"},
+			},
+		},
+		Backends: map[string]config.BackendConfig{
+			"mimir-core-test": {
+				Namespace: "core-test",
+				NamespaceRouting: &config.NamespaceRoutingConfig{
+					Mode:      "request",
+					Parameter: "tm_namespace",
+				},
+			},
+			"mimir-tool-test": {
+				Namespace: "tool-test",
+				NamespaceRouting: &config.NamespaceRoutingConfig{
+					Mode:      "request",
+					Parameter: "tm_namespace",
+				},
+			},
+		},
+	}
+
+	handler := &Handler{
+		config: cfg,
+		browserAuth: fakeBrowserAuthenticator{user: &auth.UserInfo{
+			ID: "karl@example.com",
+		}},
+		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
+			AllowedNamespaces: []string{"monitoring"},
+		}},
+		httpClient: &http.Client{},
+	}
+
+	got := executeStatusRequest(t, handler)
+	wantRawNamespaces := []string{"monitoring"}
+	wantNamespaces := []string{"core-test.ops", "tool-test.ops"}
+	if !reflect.DeepEqual(got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces) {
+		t.Fatalf("unexpected raw namespaces: got %+v want %+v", got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces)
+	}
+	if !reflect.DeepEqual(got.CurrentUser.AllowedNamespaces, wantNamespaces) {
+		t.Fatalf("unexpected backend-derived namespaces: got %+v want %+v", got.CurrentUser.AllowedNamespaces, wantNamespaces)
+	}
+}
+
+func executeStatusRequest(t *testing.T, handler *Handler) response {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/status", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	var got response
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	return got
 }
 
 func discoveryServerURL(r *http.Request) string {

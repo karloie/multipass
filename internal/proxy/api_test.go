@@ -107,6 +107,128 @@ func TestAPIBackends(t *testing.T) {
 			expectBackendCall:      true,
 		},
 		{
+			name:                    "request-routed Prometheus backend resolves cluster from caller identity",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
+				DefaultSegment: "dev",
+				OpsExact:       []string{"argocd"},
+			},
+			authzClusterResolver: &config.ClusterResolverConfig{
+				Source: "user",
+				Mappings: map[string]string{
+					"otel-collector-core-test": "core-test",
+				},
+			},
+			trustedProxyConfig: &config.TrustedProxyConfig{
+				Enabled:      true,
+				UserHeader:   "X-Grafana-User",
+				GroupsHeader: "X-Multipass-Groups",
+				SecretHeader: "X-Multipass-Proxy-Secret",
+				SecretValue:  "proxy-secret",
+			},
+			requestHeaders: map[string]string{
+				"X-Grafana-User":           "otel-collector-core-test",
+				"X-Multipass-Groups":       "otel-collector-core-test",
+				"X-Multipass-Proxy-Secret": "proxy-secret",
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"otel-collector-core-test"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"otel-collector-core-test": {"core-test.ops"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test.ops"},
+			expectedBackendQuery:   "query=up",
+			expectedAuditNamespace: "core-test.ops",
+			expectAuditEvent:       true,
+			expectAuthCall:         false,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
+			name:                    "request-routed backend rejects unresolved cluster mapping",
+			backendName:             "mimir",
+			backendType:             "prometheus",
+			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
+			backendNamespaceRouting: requestNamespaceRouting(""),
+			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
+				DefaultSegment: "dev",
+				OpsExact:       []string{"argocd"},
+			},
+			authzClusterResolver: &config.ClusterResolverConfig{
+				Source: "user",
+				Mappings: map[string]string{
+					"otel-collector-core": "core",
+				},
+			},
+			trustedProxyConfig: &config.TrustedProxyConfig{
+				Enabled:      true,
+				UserHeader:   "X-Grafana-User",
+				GroupsHeader: "X-Multipass-Groups",
+				SecretHeader: "X-Multipass-Proxy-Secret",
+				SecretValue:  "proxy-secret",
+			},
+			requestHeaders: map[string]string{
+				"X-Grafana-User":           "otel-collector-core-test",
+				"X-Multipass-Groups":       "otel-collector-core-test",
+				"X-Multipass-Proxy-Secret": "proxy-secret",
+			},
+			authzEnabled:      true,
+			expectedStatus:    http.StatusBadRequest,
+			expectAuditEvent:  false,
+			expectAuthCall:    false,
+			expectAuthzCall:   false,
+			expectBackendCall: false,
+		},
+		{
+			name:        "request-routed backend combines resolved cluster with direct segment hint",
+			backendName: "mimir",
+			backendType: "prometheus",
+			requestPath: "/mimir/api/v1/query?tm_segment=ops&query=up",
+			backendNamespaceRouting: &config.NamespaceRoutingConfig{
+				Mode:      namespaceRoutingModeRequest,
+				Parameter: "tm_segment",
+			},
+			authzClusterResolver: &config.ClusterResolverConfig{
+				Source: "user",
+				Mappings: map[string]string{
+					"otel-collector-core-test": "core-test",
+				},
+			},
+			trustedProxyConfig: &config.TrustedProxyConfig{
+				Enabled:      true,
+				UserHeader:   "X-Grafana-User",
+				GroupsHeader: "X-Multipass-Groups",
+				SecretHeader: "X-Multipass-Proxy-Secret",
+				SecretValue:  "proxy-secret",
+			},
+			requestHeaders: map[string]string{
+				"X-Grafana-User":           "otel-collector-core-test",
+				"X-Multipass-Groups":       "otel-collector-core-test",
+				"X-Multipass-Proxy-Secret": "proxy-secret",
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"otel-collector-core-test"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"otel-collector-core-test": {"core-test.ops"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test.ops"},
+			expectedBackendQuery:   "query=up",
+			expectedAuditNamespace: "core-test.ops",
+			expectAuditEvent:       true,
+			expectAuthCall:         false,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
 			name:                    "request-routed backend rewrites query after namespace stripping",
 			backendName:             "mimir",
 			backendType:             "prometheus",

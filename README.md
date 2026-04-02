@@ -10,16 +10,16 @@
 
 **Grafana-opinionated authenticating and authorizing reverse proxy**
 
-Multipass is an opinionated authenticating and authorizing reverse proxy for Grafana and the observability systems around it. It puts OIDC login, authorization, tenant isolation, and auditability at the edge, so Grafana and upstream backends do not each need their own authentication and authorization setup.
+Multipass is an opinionated authenticating and authorizing reverse proxy for Grafana and the observability systems around it. It puts login, access control, and auditability at the edge, so Grafana and upstream backends do not each need their own authentication and authorization setup.
 
-It handles browser authentication with OIDC, evaluates authorization from token claims, and forwards the headers or tokens each backend expects. In front of Grafana, Prometheus, Loki, Mimir, Tempo, OpenSearch, Kibana, VictoriaMetrics, and similar systems, Multipass becomes the single control point for access.
+It handles browser authentication with OIDC, evaluates authorization from centrally managed identity data, and forwards the headers or tokens each backend expects. In front of Grafana, Prometheus, Loki, OpenSearch, Kibana, VictoriaMetrics, and similar systems, Multipass becomes the single control point for access.
 
 It runs in two modes:
 
 1. **web** for browser-based tools and dashboards.
 2. **api** for programmatic systems that expect tokens or trusted headers.
 
-Single sign-on. Token-driven authz. Tenant isolation. Label-matching isolation. Full audit trail. Zero backend changes.
+Single sign-on. Namespace isolation. Full audit trail. Zero backend changes.
 
 ## Why Multipass?
 
@@ -28,40 +28,17 @@ Observability and operations tools rarely agree on how access should work. One w
 Multipass solves that at the edge:
 
 - **OIDC SSO** — one browser login flow across the stack
-- **OIDC and token authz** — authenticate with OIDC and authorize directly from validated token claims
+- **OIDC/JWT group authz** — one authorization model driven directly from token claims
 - **Two delivery modes** — web for UI-oriented tools, api for systems that expect tokens or headers
-- **Tenant-level isolation** — route requests into the right tenant and inject backend-native tenant headers such as `X-Scope-OrgID`
-- **Label-matching isolation** — constrain Prometheus-style queries with `queryRewrite.tenantLabel` or explicit semantic rewrite rules
 - **Backend translation** — tenant headers, JWT passthrough, or trusted web headers depending on what the backend expects
 - **Data minimization** — keep identity, authorization, and audit decisions at the edge without pulling more backend data into Multipass than necessary
 - **Auditability** — access decisions logged in one place and easy to ship onward
 
-## What It Enforces
+### Supported Applications
 
-- **Authentication**: browser and API access start with OIDC-backed identity
-- **Authorization**: tenant access is evaluated from token groups through `authz`
-- **Tenant isolation**: Prometheus-compatible backends can be fixed to a tenant or request-routed to one tenant at a time
-- **Query isolation**: PromQL and selector-style requests can be rewritten so required label matchers are validated or appended before the request reaches the backend
-
-This means Multipass can enforce both coarse tenant boundaries and fine-grained label boundaries in front of shared observability backends.
-
-### Backend Types
-
-- `prometheus` — for Prometheus-compatible APIs such as Loki, Mimir, Tempo, Prometheus, Thanos, and VictoriaMetrics. This is the main path for tenant-level isolation because Multipass can resolve a tenant, inject `X-Scope-OrgID`, and apply query rewrites for label-matching isolation.
-- `jwt` — for backends that should receive the caller's original bearer token. Use this when the upstream system already has its own JWT/OIDC-aware RBAC and Multipass should stay focused on authentication, edge authorization, and routing.
-- `generic` — for simple reverse proxying where the backend does not need tenant headers or token projection. This is the low-opinion path for static-header forwarding and plain request routing.
-- `web` — for browser-facing tools that trust identity headers from the proxy. Use this for dashboards and admin UIs where Multipass should handle OIDC login and pass user, email, groups, or role-like headers to the upstream app.
-
-See [doc/API.md](doc/API.md).
-
-For Prometheus-style backends, the important combination is:
-
-- `auth.provider: oidc`
-- `authz.provider: token`
-- request or fixed namespace routing
-- `queryRewrite.tenantLabel` or `queryRewrite.semantics`
-
-That gives you OIDC authentication, token-based authorization, tenant-level routing, and label-matching isolation in one proxy layer.
+- **jwt**: JWT-authenticated systems (LGTM, OpenSearch, Elasticsearch) - see [API.md](doc/API.md)
+- **prometheus**: Prometheus-compatible systems (Grafana, Loki, Mimir, Tempo, Thanos, VictoriaMetrics, Cortex, Prometheus, Alertmanager, Jaeger, SigNoz)
+- **web**: Header-authenticated web proxy (Grafana, Kibana, OpenSearch, VictoriaMetrics) - see [WEB.md](doc/WEB.md)
 
 ## Architecture
 
@@ -119,13 +96,49 @@ Requests are routed by backend name: `http://multipass:8080/<backend>/<path>`
 
 ## Deployment
 
-- edit [k8s/configmap.yaml](k8s/configmap.yaml)
-- deploy with `kubectl apply -f k8s/`
-- use `kubectl apply -k k8s/oidc/` for the in-cluster OIDC overlay
+**Configure backends:**
+Edit [k8s/configmap.yaml](k8s/configmap.yaml) with your backend endpoints:
+
+```yaml
+backends:
+  loki:
+    type: prometheus
+    endpoint: http://loki.monitoring.svc.cluster.local:3100
+
+  opensearch:
+    type: jwt
+    endpoint: https://opensearch.logging.svc.cluster.local:9200
+```
+
+**Deploy to cluster:**
+```bash
+kubectl apply -f k8s/
+```
+
+**Deploy with in-cluster OIDC provider:**
+```bash
+kubectl apply -k k8s/oidc/
+```
+
+This overlay keeps Multipass on `oidc` and `token` while pointing OIDC at
+`oidc-provider.monitoring.svc.cluster.local:8081`.
+
+This creates:
+- **ConfigMap**: Backend configuration and OIDC settings
+- **Deployment**: 2 replicas with health checks, shared browser sessions, and resource limits
+- **Service**: ClusterIP service on port 8080
+
+**Verify:**
+```bash
+kubectl get pods -n monitoring -l app=multipass
+kubectl logs -n monitoring -l app=multipass
+```
 
 ## Development
 
-See [doc/DEV.md](doc/DEV.md).
+See [doc/DEV.md](doc/DEV.md) for local development, testing, build modes, and release instructions.
+
+Use the external OIDC profile when you want Multipass to behave like production integrations.
 
 ## License
 

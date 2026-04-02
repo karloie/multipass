@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/karloie/multipass/internal/auth"
 	queryrewrite "github.com/karloie/multipass/internal/query"
 )
 
@@ -286,6 +287,34 @@ func TestNamespaceClassifierClassify(t *testing.T) {
 	}
 }
 
+func TestClusterResolverResolveCluster(t *testing.T) {
+	resolver := ClusterResolverConfig{
+		Source: "user",
+		Mappings: map[string]string{
+			"otel-collector-core":      "core",
+			"otel-collector-core-test": "core-test",
+		},
+	}
+
+	tests := []struct {
+		name string
+		user *auth.UserInfo
+		want string
+	}{
+		{name: "maps user id to cluster", user: &auth.UserInfo{ID: "otel-collector-core-test"}, want: "core-test"},
+		{name: "falls back to username", user: &auth.UserInfo{Username: "otel-collector-core"}, want: "core"},
+		{name: "returns empty when unmapped", user: &auth.UserInfo{ID: "unknown"}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolver.ResolveCluster(tt.user); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestConfigValidateExternalPathPrefixes(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -402,6 +431,55 @@ func TestConfigValidateQueryRewrite(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := newTestConfig(tt.backend).Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigValidateClusterResolver(t *testing.T) {
+	tests := []struct {
+		name    string
+		authz   AuthzConfig
+		wantErr bool
+	}{
+		{
+			name: "cluster resolver valid",
+			authz: AuthzConfig{
+				ClusterResolver: ClusterResolverConfig{
+					Source:   "user",
+					Mappings: map[string]string{"otel-collector-core-test": "core-test"},
+				},
+			},
+		},
+		{
+			name: "cluster resolver requires mappings",
+			authz: AuthzConfig{
+				ClusterResolver: ClusterResolverConfig{Source: "user"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cluster resolver rejects unsupported source",
+			authz: AuthzConfig{
+				ClusterResolver: ClusterResolverConfig{
+					Source:   "principal",
+					Mappings: map[string]string{"otel-collector-core-test": "core-test"},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newTestConfig(BackendConfig{Type: "prometheus", Endpoint: "http://example"})
+			cfg.Authz = tt.authz
+			err := cfg.Validate()
 			if tt.wantErr && err == nil {
 				t.Fatal("expected validation error, got nil")
 			}

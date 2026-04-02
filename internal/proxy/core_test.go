@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -163,6 +165,7 @@ type proxyTestCase struct {
 	requestHeaders           map[string]string
 	backendNamespaceRouting  *config.NamespaceRoutingConfig
 	authzNamespaceClassifier *config.NamespaceClassifierConfig
+	authzClusterResolver     *config.ClusterResolverConfig
 	authValidateFunc         func(ctx context.Context, token string) (*auth.UserInfo, error)
 	authzGetUserGroupsFunc   func(ctx context.Context, userID string) ([]string, error)
 	authzGroupMappings       map[string][]string
@@ -264,6 +267,9 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 	}
 	if tt.authzNamespaceClassifier != nil {
 		cfg.Authz.NamespaceClassifier = *tt.authzNamespaceClassifier
+	}
+	if tt.authzClusterResolver != nil {
+		cfg.Authz.ClusterResolver = *tt.authzClusterResolver
 	}
 
 	if tt.backendName != "nonexistent" {
@@ -498,6 +504,82 @@ func TestHealthEndpoint(t *testing.T) {
 	if body := strings.TrimSpace(rr.Body.String()); body != "OK" {
 		t.Fatalf("Expected body OK, got %q", body)
 	}
+}
+
+func TestRequestLoggerProbePathUsesDebugLevel(t *testing.T) {
+	proxy, err := New(&config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		Auth: config.AuthConfig{
+			Provider: "oidc",
+			OIDC: config.OIDCConfig{
+				IssuerURL:    "https://issuer.example.com",
+				ClientID:     "multipass",
+				ClientSecret: "secret",
+				RedirectURL:  "https://multipass.example.com/login/generic_oauth",
+			},
+		},
+		Backends: map[string]config.BackendConfig{},
+	}, &jwtAuthProvider{}, &browserAuthProvider{}, nil, audit.NewMemoryStore())
+	if err != nil {
+		t.Fatalf("Failed to create proxy: %v", err)
+	}
+
+	t.Run("health logs are suppressed at info", func(t *testing.T) {
+		output := captureDefaultLogs(t, slog.LevelInfo, func() {
+			req := httptest.NewRequest(http.MethodGet, "/health", nil)
+			rr := httptest.NewRecorder()
+			proxy.requestLogger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})).ServeHTTP(rr, req)
+		})
+
+		if strings.Contains(output, "\"path\":\"/health\"") {
+			t.Fatalf("expected /health request log to be suppressed at info level, got %q", output)
+		}
+	})
+
+	t.Run("health logs are emitted at debug", func(t *testing.T) {
+		output := captureDefaultLogs(t, slog.LevelDebug, func() {
+			req := httptest.NewRequest(http.MethodGet, "/health", nil)
+			rr := httptest.NewRecorder()
+			proxy.requestLogger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})).ServeHTTP(rr, req)
+		})
+
+		if !strings.Contains(output, "\"path\":\"/health\"") {
+			t.Fatalf("expected /health request log at debug level, got %q", output)
+		}
+	})
+
+	t.Run("normal requests stay at info", func(t *testing.T) {
+		output := captureDefaultLogs(t, slog.LevelInfo, func() {
+			req := httptest.NewRequest(http.MethodGet, "/grafana/api/health", nil)
+			rr := httptest.NewRecorder()
+			proxy.requestLogger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})).ServeHTTP(rr, req)
+		})
+
+		if !strings.Contains(output, "\"path\":\"/grafana/api/health\"") {
+			t.Fatalf("expected normal request log at info level, got %q", output)
+		}
+	})
+}
+
+func captureDefaultLogs(t *testing.T, level slog.Level, run func()) string {
+	t.Helper()
+
+	var buffer bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buffer, &slog.HandlerOptions{Level: level}))
+	original := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() {
+		slog.SetDefault(original)
+	})
+
+	run()
+	return buffer.String()
 }
 
 func TestFixedBackendNamespaceOverridesRequestNamespace(t *testing.T) {

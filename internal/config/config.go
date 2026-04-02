@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/karloie/multipass/internal/auth"
 	queryrewrite "github.com/karloie/multipass/internal/query"
 	"gopkg.in/yaml.v3"
 )
@@ -126,7 +127,14 @@ type AuthzConfig struct {
 	Enabled             bool                      `yaml:"enabled"`       // Enable authorization
 	Provider            string                    `yaml:"provider"`      // "token"
 	GroupMappings       map[string][]string       `yaml:"groupMappings"` // group -> namespaces
+	ClusterResolver     ClusterResolverConfig     `yaml:"clusterResolver,omitempty"`
 	NamespaceClassifier NamespaceClassifierConfig `yaml:"namespaceClassifier,omitempty"`
+}
+
+// ClusterResolverConfig maps authenticated callers to cluster names.
+type ClusterResolverConfig struct {
+	Source   string            `yaml:"source,omitempty"`
+	Mappings map[string]string `yaml:"mappings,omitempty"`
 }
 
 // NamespaceClassifierConfig maps raw namespaces to Multipass scopes.
@@ -187,6 +195,31 @@ type WebConfig struct {
 	GroupsHeader string            `yaml:"groupsHeader"`           // Header for user groups (e.g., X-WEBAUTH-GROUP)
 	RoleHeader   string            `yaml:"roleHeader,omitempty"`   // Header for backend-native role (e.g., X-WEBAUTH-ROLE)
 	RoleMappings map[string]string `yaml:"roleMappings,omitempty"` // Group -> backend-native role
+}
+
+func (c ClusterResolverConfig) HasMappings() bool {
+	return len(c.Mappings) > 0
+}
+
+func (c ClusterResolverConfig) ResolveCluster(userInfo *auth.UserInfo) string {
+	if userInfo == nil || len(c.Mappings) == 0 {
+		return ""
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.Source)) {
+	case "", "user":
+		for _, candidate := range []string{userInfo.ID, userInfo.Username, userInfo.PrincipalID, userInfo.Email} {
+			key := strings.TrimSpace(candidate)
+			if key == "" {
+				continue
+			}
+			if cluster, ok := c.Mappings[key]; ok {
+				return strings.TrimSpace(cluster)
+			}
+		}
+	}
+
+	return ""
 }
 
 func (c NamespaceClassifierConfig) HasRules() bool {
@@ -414,6 +447,38 @@ func (c *Config) validateAuthz() error {
 		case "token":
 		default:
 			return fmt.Errorf("authz provider must be: token")
+		}
+	}
+
+	if err := c.validateClusterResolver(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Config) validateClusterResolver() error {
+	resolver := c.Authz.ClusterResolver
+	if !resolver.HasMappings() && strings.TrimSpace(resolver.Source) == "" {
+		return nil
+	}
+
+	if !resolver.HasMappings() {
+		return fmt.Errorf("authz clusterResolver mappings are required when clusterResolver is configured")
+	}
+
+	switch strings.ToLower(strings.TrimSpace(resolver.Source)) {
+	case "", "user":
+	default:
+		return fmt.Errorf("authz clusterResolver source must be: user")
+	}
+
+	for key, cluster := range resolver.Mappings {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("authz clusterResolver mappings cannot contain empty keys")
+		}
+		if strings.TrimSpace(cluster) == "" {
+			return fmt.Errorf("authz clusterResolver mappings cannot contain empty cluster values")
 		}
 	}
 

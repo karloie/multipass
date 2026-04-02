@@ -103,6 +103,16 @@ authz:
   #     - utv
   #     - applikasjonsplattform
 
+  # Optional: resolve a cluster name from the authenticated caller before
+  # classifying a raw Kubernetes namespace into a tenant like core-test.dev.
+  # This is useful for shared OTLP ingress where collectors should send only
+  # tm_namespace and let Multipass build the final tenant.
+  # clusterResolver:
+  #   source: user
+  #   mappings:
+  #     otel-collector-core: core
+  #     otel-collector-core-test: core-test
+
 # === Audit Logging ===
 # Log all access attempts for compliance and security analysis
 audit:
@@ -220,7 +230,8 @@ backends:
 
   # Request routing can also classify raw Kubernetes namespaces into a
   # cluster scope when authz.namespaceClassifier is configured. In that mode,
-  # backend.namespace is used as the cluster prefix for the resulting scope.
+  # backend.namespace or authz.clusterResolver is used as the cluster prefix
+  # for the resulting scope.
   # mimir-core-test:
   #   type: prometheus
   #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
@@ -229,6 +240,20 @@ backends:
   #     mode: request
   #     parameter: tm_namespace
   #     source: both
+
+  # For shared OTLP ingest, request routing can also accept a direct segment
+  # hint such as tm_segment=dev or tm_segment=ops. When authz.clusterResolver
+  # is configured and no namespaceClassifier rules are present, Multipass
+  # combines the resolved cluster with the provided segment.
+  # mimir-otlp:
+  #   type: prometheus
+  #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
+  #   externalHost: otlp.example.com
+  #   externalPathPrefixes:
+  #     - /otlp/v1/metrics
+  #   namespaceRouting:
+  #     mode: request
+  #     parameter: tm_segment
 
   # Example fixed-namespace aliases for a first rollout.
   # Each alias is bound to one namespace. Caller-supplied ?namespace=

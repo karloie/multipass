@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,17 +50,18 @@ type checksStatus struct {
 }
 
 type currentUser struct {
-	Authenticated     bool     `json:"authenticated"`
-	ID                string   `json:"id,omitempty"`
-	Username          string   `json:"username,omitempty"`
-	PrincipalID       string   `json:"principal_id,omitempty"`
-	TenantID          string   `json:"tenant_id,omitempty"`
-	Email             string   `json:"email,omitempty"`
-	Name              string   `json:"name,omitempty"`
-	Groups            []string `json:"groups,omitempty"`
-	AllowedNamespaces []string `json:"allowed_namespaces,omitempty"`
-	ElevatedRoles     []string `json:"elevated_roles,omitempty"`
-	PermissionsError  string   `json:"permissions_error,omitempty"`
+	Authenticated        bool     `json:"authenticated"`
+	ID                   string   `json:"id,omitempty"`
+	Username             string   `json:"username,omitempty"`
+	PrincipalID          string   `json:"principal_id,omitempty"`
+	TenantID             string   `json:"tenant_id,omitempty"`
+	Email                string   `json:"email,omitempty"`
+	Name                 string   `json:"name,omitempty"`
+	Groups               []string `json:"groups,omitempty"`
+	RawAllowedNamespaces []string `json:"raw_allowed_namespaces,omitempty"`
+	AllowedNamespaces    []string `json:"allowed_namespaces,omitempty"`
+	ElevatedRoles        []string `json:"elevated_roles,omitempty"`
+	PermissionsError     string   `json:"permissions_error,omitempty"`
 }
 
 type browserAuthenticator interface {
@@ -151,7 +153,8 @@ func (h *Handler) currentUserStatus(r *http.Request) currentUser {
 			result.PermissionsError = err.Error()
 		} else if permission != nil {
 			result.Groups = append([]string(nil), permission.Groups...)
-			result.AllowedNamespaces = append([]string(nil), permission.AllowedNamespaces...)
+			result.RawAllowedNamespaces = append([]string(nil), permission.AllowedNamespaces...)
+			result.AllowedNamespaces = displayAllowedNamespaces(h.config, userInfo, permission.AllowedNamespaces)
 			result.ElevatedRoles = elevatedRoleNames(permission.ElevatedRoles)
 		}
 	}
@@ -227,6 +230,155 @@ func hasOIDCConfig(cfg *config.Config) bool {
 
 	oidcCfg := cfg.Auth.OIDC
 	return strings.TrimSpace(oidcCfg.IssuerURL) != "" || strings.TrimSpace(oidcCfg.ClientID) != "" || strings.TrimSpace(oidcCfg.RedirectURL) != ""
+}
+
+func displayAllowedNamespaces(cfg *config.Config, userInfo *auth.UserInfo, allowedNamespaces []string) []string {
+	if len(allowedNamespaces) == 0 {
+		return nil
+	}
+
+	if cfg == nil {
+		return append([]string(nil), allowedNamespaces...)
+	}
+
+	resolvedClusters := statusResolvedClusters(cfg, userInfo)
+	backendClusters := statusRequestRoutedBackendClusters(cfg)
+	visibleNamespaces := make(map[string]struct{}, len(allowedNamespaces))
+
+	for _, namespace := range allowedNamespaces {
+		trimmedNamespace := strings.TrimSpace(namespace)
+		if trimmedNamespace == "" {
+			continue
+		}
+
+		if trimmedNamespace == "*" || isDerivedNamespace(trimmedNamespace, resolvedClusters, backendClusters, cfg.Authz.NamespaceClassifier) {
+			visibleNamespaces[trimmedNamespace] = struct{}{}
+			continue
+		}
+
+		derivedNamespaces := deriveVisibleNamespaces(cfg, trimmedNamespace, resolvedClusters, backendClusters)
+		if len(derivedNamespaces) == 0 {
+			visibleNamespaces[trimmedNamespace] = struct{}{}
+			continue
+		}
+
+		for _, derivedNamespace := range derivedNamespaces {
+			visibleNamespaces[derivedNamespace] = struct{}{}
+		}
+	}
+
+	if len(visibleNamespaces) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(visibleNamespaces))
+	for namespace := range visibleNamespaces {
+		result = append(result, namespace)
+	}
+	sort.Strings(result)
+
+	return result
+}
+
+func deriveVisibleNamespaces(cfg *config.Config, namespace string, resolvedClusters, backendClusters []string) []string {
+	authzConfig := cfg.Authz
+	if authzConfig.NamespaceClassifier.HasRules() {
+		derivedNamespaces := make([]string, 0, len(resolvedClusters)+len(backendClusters)+1)
+		for _, cluster := range backendClusters {
+			derivedNamespaces = append(derivedNamespaces, authzConfig.NamespaceClassifier.Classify(cluster, namespace))
+		}
+		for _, cluster := range resolvedClusters {
+			derivedNamespaces = append(derivedNamespaces, authzConfig.NamespaceClassifier.Classify(cluster, namespace))
+		}
+		if len(derivedNamespaces) == 0 {
+			derivedNamespaces = append(derivedNamespaces, authzConfig.NamespaceClassifier.Classify("", namespace))
+		}
+		return derivedNamespaces
+	}
+
+	if len(resolvedClusters) == 0 {
+		return nil
+	}
+
+	normalizedNamespace := strings.ToLower(strings.TrimSpace(namespace))
+	if normalizedNamespace == "" {
+		return nil
+	}
+
+	derivedNamespaces := make([]string, 0, len(resolvedClusters))
+	for _, cluster := range resolvedClusters {
+		derivedNamespaces = append(derivedNamespaces, cluster+"."+normalizedNamespace)
+	}
+
+	return derivedNamespaces
+}
+
+func statusResolvedClusters(cfg *config.Config, userInfo *auth.UserInfo) []string {
+	if cfg == nil || !cfg.Authz.ClusterResolver.HasMappings() {
+		return nil
+	}
+
+	cluster := strings.TrimSpace(cfg.Authz.ClusterResolver.ResolveCluster(userInfo))
+	if cluster == "" {
+		return nil
+	}
+
+	return []string{cluster}
+}
+
+func statusRequestRoutedBackendClusters(cfg *config.Config) []string {
+	if cfg == nil || !cfg.Authz.NamespaceClassifier.HasRules() {
+		return nil
+	}
+
+	clusters := make(map[string]struct{})
+	for _, backend := range cfg.Backends {
+		if backend.NamespaceRouting == nil || !strings.EqualFold(strings.TrimSpace(backend.NamespaceRouting.Mode), "request") {
+			continue
+		}
+
+		cluster := strings.TrimSpace(backend.Namespace)
+		if cluster == "" {
+			continue
+		}
+
+		clusters[cluster] = struct{}{}
+	}
+
+	if len(clusters) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(clusters))
+	for cluster := range clusters {
+		result = append(result, cluster)
+	}
+	sort.Strings(result)
+
+	return result
+}
+
+func isDerivedNamespace(namespace string, resolvedClusters, backendClusters []string, classifier config.NamespaceClassifierConfig) bool {
+	for _, cluster := range resolvedClusters {
+		if strings.HasPrefix(namespace, cluster+".") {
+			return true
+		}
+	}
+	for _, cluster := range backendClusters {
+		if strings.HasPrefix(namespace, cluster+".") {
+			return true
+		}
+	}
+
+	if len(resolvedClusters) == 0 && len(backendClusters) == 0 && classifier.HasRules() {
+		defaultSegment := strings.TrimSpace(classifier.DefaultSegment)
+		if defaultSegment == "" {
+			defaultSegment = "dev"
+		}
+		return namespace == "ops" || namespace == defaultSegment
+	}
+
+	return false
 }
 
 func elevatedRoleNames(roles []authz.ElevatedRole) []string {
