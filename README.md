@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docker Pulls](https://img.shields.io/docker/pulls/karloie/multipass)](https://hub.docker.com/r/karloie/multipass)
 
-<img src="doc/vibecoded.png" width="120" alt="Vibe Coded Badge" align="right">
+<img src="https://raw.githubusercontent.com/karloie/multipass/main/doc/vibecoded.png" width="120" alt="Vibe Coded Badge" align="right">
 
 **Grafana-opinionated authenticating and authorizing reverse proxy**
 
