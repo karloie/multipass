@@ -123,6 +123,7 @@ func (m *mockAuthzProvider) GetActiveElevatedRoles(ctx context.Context, userInfo
 
 type capturedRequest struct {
 	Method   string
+	Host     string
 	Path     string
 	RawQuery string
 	Body     string
@@ -188,6 +189,7 @@ func captureBackend() (*httptest.Server, *capturedRequest) {
 	captured := &capturedRequest{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured.Method = r.Method
+		captured.Host = r.Host
 		captured.Path = r.URL.Path
 		captured.RawQuery = r.URL.RawQuery
 		body, _ := io.ReadAll(r.Body)

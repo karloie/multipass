@@ -120,6 +120,7 @@ func trustedProxyUserInfo(r *http.Request, trustedProxyConfig config.TrustedProx
 
 	return &auth.UserInfo{
 		ID:          trustedID,
+		Username:    trustedUser,
 		PrincipalID: strings.TrimSpace(r.Header.Get(trustedProxyConfig.PrincipalIDHeader)),
 		TenantID:    strings.TrimSpace(r.Header.Get(trustedProxyConfig.TenantIDHeader)),
 		Email:       email,

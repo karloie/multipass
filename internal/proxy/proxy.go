@@ -118,7 +118,10 @@ func New(cfg *config.Config, authProvider auth.Provider, browserAuth browserAuth
 		backendConfig := backend
 		backendName := name
 		proxy.Director = func(req *http.Request) {
+			req.URL.Opaque = ""
+			req.URL.RawPath = ""
 			originalDirector(req)
+			req.Host = req.URL.Host
 			p.injectBackendHeaders(req, backendConfig, backendName)
 		}
 
