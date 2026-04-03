@@ -365,7 +365,7 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 				return []string{"default-group"}, nil
 			},
 		}
-		authzEvaluator = authz.NewPolicyEvaluator(authzProvider, groupMappings)
+		authzEvaluator = authz.NewPolicyEvaluator(authzProvider, authzProvider, groupMappings)
 	}
 
 	auditStore := audit.NewMemoryStore()

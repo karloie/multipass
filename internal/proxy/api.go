@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/karloie/multipass/internal/auth"
+	"github.com/karloie/multipass/internal/authz"
 	"github.com/karloie/multipass/internal/config"
 )
 
@@ -27,6 +28,7 @@ func (p *Proxy) authenticateAPIRequest(w http.ResponseWriter, r *http.Request, n
 	}
 	if ok {
 		ctx := context.WithValue(r.Context(), userInfoKey, userInfo)
+		ctx = authz.WithGroupCacheLookupAllowed(ctx, p.shouldUseCachedGroups(r))
 		next.ServeHTTP(w, r.WithContext(ctx))
 		return
 	}
@@ -58,7 +60,6 @@ func (p *Proxy) authenticateBearerRequest(w http.ResponseWriter, r *http.Request
 		http.Error(w, errMsgInvalidToken, http.StatusUnauthorized)
 		return
 	}
-
 	ctx := context.WithValue(r.Context(), userInfoKey, userInfo)
 	ctx = context.WithValue(ctx, jwtTokenKey, token)
 	next.ServeHTTP(w, r.WithContext(ctx))
@@ -80,6 +81,21 @@ func (p *Proxy) authenticateTrustedProxyRequest(r *http.Request) (*auth.UserInfo
 	}
 
 	return userInfo, true, nil
+}
+
+func (p *Proxy) shouldUseCachedGroups(r *http.Request) bool {
+	if p == nil || p.config == nil || r == nil {
+		return false
+	}
+
+	trustedProxy := p.config.Auth.TrustedProxy
+	callerHeader := strings.TrimSpace(trustedProxy.CallerHeader)
+	callerValue := strings.TrimSpace(trustedProxy.CallerValue)
+	if callerHeader == "" || callerValue == "" {
+		return false
+	}
+
+	return strings.TrimSpace(r.Header.Get(callerHeader)) == callerValue
 }
 
 func trustedProxyUserInfo(r *http.Request, trustedProxyConfig config.TrustedProxyConfig) (*auth.UserInfo, error) {

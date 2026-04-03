@@ -30,7 +30,7 @@ func TestPolicyEvaluatorCachesPermissions(t *testing.T) {
 		groups: []string{"team-platform"},
 		roles:  []ElevatedRole{{Role: "prod-admin"}},
 	}
-	evaluator := NewPolicyEvaluator(provider, map[string][]string{
+	evaluator := NewPolicyEvaluator(provider, provider, map[string][]string{
 		"team-platform": {"dev", "test"},
 		"prod-admin":    {"prod"},
 	})
@@ -63,7 +63,7 @@ func TestPolicyEvaluatorCachesPermissions(t *testing.T) {
 
 func TestPolicyEvaluatorCacheExpires(t *testing.T) {
 	provider := &countingProvider{groups: []string{"team-sre"}}
-	evaluator := NewPolicyEvaluator(provider, map[string][]string{
+	evaluator := NewPolicyEvaluator(provider, provider, map[string][]string{
 		"team-sre": {"prod"},
 	})
 

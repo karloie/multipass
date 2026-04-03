@@ -12,9 +12,17 @@ type ElevatedRole struct {
 	ExpiresAt time.Time
 }
 
-type Provider interface {
+type GroupProvider interface {
 	GetUserGroups(ctx context.Context, userInfo *auth.UserInfo) ([]string, error)
+}
+
+type ElevatedRoleProvider interface {
 	GetActiveElevatedRoles(ctx context.Context, userInfo *auth.UserInfo) ([]ElevatedRole, error)
+}
+
+type Provider interface {
+	GroupProvider
+	ElevatedRoleProvider
 }
 
 type Evaluator interface {

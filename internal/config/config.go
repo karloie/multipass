@@ -50,6 +50,8 @@ type TrustedProxyConfig struct {
 	EmailHeader       string `yaml:"emailHeader,omitempty"`
 	NameHeader        string `yaml:"nameHeader,omitempty"`
 	GroupsHeader      string `yaml:"groupsHeader,omitempty"`
+	CallerHeader      string `yaml:"callerHeader,omitempty"`
+	CallerValue       string `yaml:"callerValue,omitempty"`
 	PrincipalIDHeader string `yaml:"principalIdHeader,omitempty"`
 	TenantIDHeader    string `yaml:"tenantIdHeader,omitempty"`
 	SecretHeader      string `yaml:"secretHeader,omitempty"`
@@ -434,6 +436,9 @@ func (c *Config) validateTrustedProxy() error {
 	}
 	if c.Auth.TrustedProxy.SecretValue == "" {
 		return fmt.Errorf("auth trustedProxy secretValue is required when enabled")
+	}
+	if (strings.TrimSpace(c.Auth.TrustedProxy.CallerHeader) == "") != (strings.TrimSpace(c.Auth.TrustedProxy.CallerValue) == "") {
+		return fmt.Errorf("auth trustedProxy callerHeader and callerValue must be configured together")
 	}
 
 	return nil

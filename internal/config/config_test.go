@@ -43,6 +43,8 @@ func TestLoadExpandsEnvironmentVariables(t *testing.T) {
 		"  trustedProxy:\n" +
 		"    enabled: true\n" +
 		"    userHeader: X-Grafana-User\n" +
+		"    callerHeader: X-Multipass-Caller\n" +
+		"    callerValue: grafana-datasource\n" +
 		"    secretHeader: X-Multipass-Proxy-Secret\n" +
 		"    secretValue: ${MULTIPASS_TRUSTED_PROXY_SECRET}\n" +
 		"  oidc:\n" +
@@ -77,6 +79,12 @@ func TestLoadExpandsEnvironmentVariables(t *testing.T) {
 	}
 	if cfg.Auth.TrustedProxy.SecretValue != "proxy-secret" {
 		t.Fatalf("expected expanded trusted proxy secret, got %q", cfg.Auth.TrustedProxy.SecretValue)
+	}
+	if cfg.Auth.TrustedProxy.CallerHeader != "X-Multipass-Caller" {
+		t.Fatalf("expected trusted proxy caller header, got %q", cfg.Auth.TrustedProxy.CallerHeader)
+	}
+	if cfg.Auth.TrustedProxy.CallerValue != "grafana-datasource" {
+		t.Fatalf("expected trusted proxy caller value, got %q", cfg.Auth.TrustedProxy.CallerValue)
 	}
 }
 

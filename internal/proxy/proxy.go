@@ -248,7 +248,6 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 			http.Error(w, fmt.Sprintf(errMsgAccessDenied, namespace), http.StatusForbidden)
 			return
 		}
-
 		r = r.WithContext(context.WithValue(r.Context(), permissionsKey, perms))
 	}
 
@@ -284,7 +283,6 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 		p.logAudit(r.Context(), userInfo, resolved.name, namespace, start, recorder.statusCode, "", perms)
 	}
 }
-
 func rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace string) (*http.Request, error) {
 	if r == nil || !queryrewrite.HasRules(resolved.config.QueryRewrite) {
 		return r, nil
@@ -323,6 +321,9 @@ func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig confi
 			if namespace == "" {
 				return "", fmt.Errorf(errMsgNamespaceMissing, backendConfig.NamespaceRouting.Parameter)
 			}
+			if segmentNamespace, ok := resolveDirectSegmentNamespace(strings.TrimSpace(backendConfig.Namespace), namespace); ok {
+				return segmentNamespace, nil
+			}
 			if strings.TrimSpace(backendConfig.Namespace) != "" && authzConfig.NamespaceClassifier.HasRules() {
 				return authzConfig.NamespaceClassifier.Classify(backendConfig.Namespace, namespace), nil
 			}
@@ -330,6 +331,9 @@ func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig confi
 				cluster := authzConfig.ClusterResolver.ResolveCluster(userInfo)
 				if cluster == "" {
 					return "", fmt.Errorf("unable to resolve cluster for request namespace routing")
+				}
+				if segmentNamespace, ok := resolveDirectSegmentNamespace(cluster, namespace); ok {
+					return segmentNamespace, nil
 				}
 				return authzConfig.NamespaceClassifier.Classify(cluster, namespace), nil
 			}
@@ -380,6 +384,21 @@ func resolveNamespaceAliases(authzConfig config.AuthzConfig, namespace string) s
 
 	return strings.Join(resolved, "|")
 }
+
+func resolveDirectSegmentNamespace(cluster, namespace string) (string, bool) {
+	trimmedCluster := strings.TrimSpace(cluster)
+	if trimmedCluster == "" {
+		return "", false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(namespace)) {
+	case "dev", "ops":
+		return trimmedCluster + "." + strings.ToLower(strings.TrimSpace(namespace)), true
+	default:
+		return "", false
+	}
+}
+
 func stripNamespaceRoutingQueryParam(r *http.Request, backendConfig config.BackendConfig) (*http.Request, error) {
 	if r == nil || backendConfig.NamespaceRouting == nil || backendConfig.NamespaceRouting.Mode != namespaceRoutingModeRequest {
 		return r, nil

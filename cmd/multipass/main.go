@@ -97,7 +97,7 @@ func main() {
 		LogoutPath:   cfg.Auth.OIDC.Paths().LogoutPath,
 	})
 
-	evaluator, err := initializeAuthzProvider(cfg)
+	evaluator, err := initializeAuthzProvider(cfg, sessionTTL)
 	if err != nil {
 		fatal("failed to initialize authz provider", err)
 	}
@@ -261,23 +261,29 @@ func initializeAuthProvider(cfg *config.Config) (auth.Provider, error) {
 	}
 }
 
-func initializeAuthzProvider(cfg *config.Config) (*authz.PolicyEvaluator, error) {
+func initializeAuthzProvider(cfg *config.Config, sessionTTL time.Duration) (*authz.PolicyEvaluator, error) {
 	if !cfg.Authz.Enabled {
 		slog.Info("authorization disabled")
 		return nil, nil
 	}
 
-	var provider authz.Provider
+	var groupProvider authz.GroupProvider
+	var roleProvider authz.ElevatedRoleProvider
 
 	switch cfg.Authz.Provider {
 	case providerToken:
-		provider = authz.NewTokenProvider()
+		tokenProvider := authz.NewTokenProvider()
+		groupProvider = tokenProvider
+		roleProvider = tokenProvider
+		if cfg.Auth.TrustedProxy.Enabled {
+			groupProvider = authz.NewCachedGroupProvider(groupProvider, authz.NewMemoryGroupCache(sessionTTL))
+		}
 
 	default:
 		return nil, fmt.Errorf("unknown authz provider '%s' (supported: token)", cfg.Authz.Provider)
 	}
 
-	evaluator := authz.NewPolicyEvaluator(provider, cfg.Authz.GroupMappings)
+	evaluator := authz.NewPolicyEvaluator(groupProvider, roleProvider, cfg.Authz.GroupMappings)
 	slog.Info("authorization enabled", slog.String("provider", cfg.Authz.Provider))
 	return evaluator, nil
 }

@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/karloie/multipass/internal/audit"
 	"github.com/karloie/multipass/internal/auth"
+	"github.com/karloie/multipass/internal/authz"
 	"github.com/karloie/multipass/internal/config"
 	queryrewrite "github.com/karloie/multipass/internal/query"
 )
@@ -257,6 +261,48 @@ func TestAPIBackends(t *testing.T) {
 			expectedAuditNamespace: "utv",
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
+			expectAuthzCall:        true,
+			expectBackendCall:      true,
+		},
+		{
+			name:             "request-routed backend with namespace prefix preserves direct segment hint when classifier is enabled",
+			backendName:      "mimir",
+			backendType:      "prometheus",
+			requestPath:      "/mimir/api/v1/query?tm_segment=ops&query=up",
+			backendNamespace: "mgmt-plat",
+			backendNamespaceRouting: &config.NamespaceRoutingConfig{
+				Mode:      namespaceRoutingModeRequest,
+				Parameter: "tm_segment",
+			},
+			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
+				DefaultSegment: "dev",
+				OpsExact:       []string{"monitoring", "argocd"},
+			},
+			trustedProxyConfig: &config.TrustedProxyConfig{
+				Enabled:      true,
+				UserHeader:   "X-Grafana-User",
+				GroupsHeader: "X-Multipass-Groups",
+				SecretHeader: "X-Multipass-Proxy-Secret",
+				SecretValue:  "proxy-secret",
+			},
+			requestHeaders: map[string]string{
+				"X-Grafana-User":           "otel-collector-mgmt-plat",
+				"X-Multipass-Groups":       "otel-collector-mgmt-plat",
+				"X-Multipass-Proxy-Secret": "proxy-secret",
+			},
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"otel-collector-mgmt-plat"}, nil
+			},
+			authzGroupMappings: map[string][]string{
+				"otel-collector-mgmt-plat": {"mgmt-plat.dev", "mgmt-plat.ops"},
+			},
+			authzEnabled:           true,
+			expectedStatus:         http.StatusOK,
+			expectedHeaders:        map[string]string{"X-Scope-OrgID": "mgmt-plat.ops"},
+			expectedBackendQuery:   "query=up",
+			expectedAuditNamespace: "mgmt-plat.ops",
+			expectAuditEvent:       true,
+			expectAuthCall:         false,
 			expectAuthzCall:        true,
 			expectBackendCall:      true,
 		},
@@ -794,6 +840,200 @@ func TestAPIBackends(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			executeProxyTestCase(t, tt)
 		})
+	}
+}
+
+func TestTrustedProxyRequestFallsBackToCachedGroupsFromBrowserRequest(t *testing.T) {
+	grafanaServer, _ := captureBackend()
+	defer grafanaServer.Close()
+
+	prometheusServer, prometheusCaptured := captureBackend()
+	defer prometheusServer.Close()
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		Auth: config.AuthConfig{
+			Provider:   "oidc",
+			SessionTTL: "1h",
+			OIDC: config.OIDCConfig{
+				IssuerURL:    "https://issuer.example.com",
+				ClientID:     "multipass",
+				ClientSecret: "secret",
+				RedirectURL:  "https://multipass.example.com/login/generic_oauth",
+			},
+			TrustedProxy: config.TrustedProxyConfig{
+				Enabled:      true,
+				UserHeader:   "X-Grafana-User",
+				GroupsHeader: "X-Multipass-Groups",
+				CallerHeader: "X-Multipass-Caller",
+				CallerValue:  "grafana-datasource",
+				SecretHeader: "X-Multipass-Proxy-Secret",
+				SecretValue:  "proxy-secret",
+			},
+		},
+		Authz: config.AuthzConfig{
+			Enabled:  true,
+			Provider: "token",
+			GroupMappings: map[string][]string{
+				"Rolle Plattformadmin utvikling": {"mgmt-plat.dev", "mgmt-plat.ops"},
+			},
+		},
+		Audit: config.AuditConfig{
+			Enabled: true,
+			Store:   "memory",
+		},
+		Backends: map[string]config.BackendConfig{
+			"grafana": {
+				Type:      "web",
+				Endpoint:  grafanaServer.URL,
+				Namespace: "mgmt-plat.dev",
+				WebConfig: &config.WebConfig{
+					UserHeader:   "X-WEBAUTH-USER",
+					GroupsHeader: "X-WEBAUTH-GROUP",
+				},
+			},
+			"prometheus": {
+				Type:      "prometheus",
+				Endpoint:  prometheusServer.URL,
+				Namespace: "mgmt-plat.ops",
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("invalid config: %v", err)
+	}
+
+	proxy, err := New(
+		cfg,
+		&jwtAuthProvider{},
+		&browserAuthProvider{user: &auth.UserInfo{
+			ID:       "(usr!koi)",
+			Username: "koi",
+			Groups:   []string{"Rolle Plattformadmin utvikling"},
+		}},
+		authz.NewPolicyEvaluator(authz.NewCachedGroupProvider(authz.NewTokenProvider(), authz.NewMemoryGroupCache(time.Hour)), authz.NewTokenProvider(), cfg.Authz.GroupMappings),
+		audit.NewMemoryStore(),
+	)
+	if err != nil {
+		t.Fatalf("create proxy: %v", err)
+	}
+
+	webRequest := httptest.NewRequest(http.MethodGet, "/grafana/api/dashboards", nil)
+	webResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(webResponse, webRequest)
+	if webResponse.Code != http.StatusOK {
+		t.Fatalf("expected web request to succeed, got %d: %s", webResponse.Code, webResponse.Body.String())
+	}
+
+	apiRequest := httptest.NewRequest(http.MethodGet, "/prometheus/api/v1/labels", nil)
+	apiRequest.Header.Set("X-Grafana-User", "koi")
+	apiRequest.Header.Set("X-Multipass-Caller", "grafana-datasource")
+	apiRequest.Header.Set("X-Multipass-Proxy-Secret", "proxy-secret")
+	apiResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(apiResponse, apiRequest)
+	if apiResponse.Code != http.StatusOK {
+		t.Fatalf("expected trusted proxy request to succeed, got %d: %s", apiResponse.Code, apiResponse.Body.String())
+	}
+
+	if got := prometheusCaptured.Headers.Get("X-Scope-OrgID"); got != "mgmt-plat.ops" {
+		t.Fatalf("unexpected X-Scope-OrgID header: got %q want %q", got, "mgmt-plat.ops")
+	}
+	if got := prometheusCaptured.Path; got != "/api/v1/labels" {
+		t.Fatalf("unexpected backend path: got %q want %q", got, "/api/v1/labels")
+	}
+}
+
+func TestTrustedProxyRequestWithoutCallerMarkerDoesNotUseCachedGroups(t *testing.T) {
+	grafanaServer, _ := captureBackend()
+	defer grafanaServer.Close()
+
+	prometheusServer, _ := captureBackend()
+	defer prometheusServer.Close()
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		Auth: config.AuthConfig{
+			Provider:   "oidc",
+			SessionTTL: "1h",
+			OIDC: config.OIDCConfig{
+				IssuerURL:    "https://issuer.example.com",
+				ClientID:     "multipass",
+				ClientSecret: "secret",
+				RedirectURL:  "https://multipass.example.com/login/generic_oauth",
+			},
+			TrustedProxy: config.TrustedProxyConfig{
+				Enabled:      true,
+				UserHeader:   "X-Grafana-User",
+				GroupsHeader: "X-Multipass-Groups",
+				CallerHeader: "X-Multipass-Caller",
+				CallerValue:  "grafana-datasource",
+				SecretHeader: "X-Multipass-Proxy-Secret",
+				SecretValue:  "proxy-secret",
+			},
+		},
+		Authz: config.AuthzConfig{
+			Enabled:  true,
+			Provider: "token",
+			GroupMappings: map[string][]string{
+				"Rolle Plattformadmin utvikling": {"mgmt-plat.dev", "mgmt-plat.ops"},
+			},
+		},
+		Audit: config.AuditConfig{
+			Enabled: true,
+			Store:   "memory",
+		},
+		Backends: map[string]config.BackendConfig{
+			"grafana": {
+				Type:      "web",
+				Endpoint:  grafanaServer.URL,
+				Namespace: "mgmt-plat.dev",
+				WebConfig: &config.WebConfig{
+					UserHeader:   "X-WEBAUTH-USER",
+					GroupsHeader: "X-WEBAUTH-GROUP",
+				},
+			},
+			"prometheus": {
+				Type:      "prometheus",
+				Endpoint:  prometheusServer.URL,
+				Namespace: "mgmt-plat.ops",
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("invalid config: %v", err)
+	}
+
+	proxy, err := New(
+		cfg,
+		&jwtAuthProvider{},
+		&browserAuthProvider{user: &auth.UserInfo{
+			ID:       "(usr!koi)",
+			Username: "koi",
+			Groups:   []string{"Rolle Plattformadmin utvikling"},
+		}},
+		authz.NewPolicyEvaluator(authz.NewCachedGroupProvider(authz.NewTokenProvider(), authz.NewMemoryGroupCache(time.Hour)), authz.NewTokenProvider(), cfg.Authz.GroupMappings),
+		audit.NewMemoryStore(),
+	)
+	if err != nil {
+		t.Fatalf("create proxy: %v", err)
+	}
+
+	webRequest := httptest.NewRequest(http.MethodGet, "/grafana/api/dashboards", nil)
+	webResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(webResponse, webRequest)
+	if webResponse.Code != http.StatusOK {
+		t.Fatalf("expected web request to succeed, got %d: %s", webResponse.Code, webResponse.Body.String())
+	}
+
+	apiRequest := httptest.NewRequest(http.MethodGet, "/prometheus/api/v1/labels", nil)
+	apiRequest.Header.Set("X-Grafana-User", "koi")
+	apiRequest.Header.Set("X-Multipass-Proxy-Secret", "proxy-secret")
+	apiResponse := httptest.NewRecorder()
+	proxy.ServeHTTP(apiResponse, apiRequest)
+	if apiResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected trusted proxy request without caller marker to be forbidden, got %d: %s", apiResponse.Code, apiResponse.Body.String())
 	}
 }
 

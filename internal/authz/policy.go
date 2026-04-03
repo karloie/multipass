@@ -19,7 +19,8 @@ type cachedPermission struct {
 }
 
 type PolicyEvaluator struct {
-	provider      Provider
+	groupProvider GroupProvider
+	roleProvider  ElevatedRoleProvider
 	groupMappings map[string][]string // group -> allowed namespaces
 	cache         map[string]cachedPermission
 	cacheMu       sync.RWMutex
@@ -27,9 +28,10 @@ type PolicyEvaluator struct {
 	now           func() time.Time
 }
 
-func NewPolicyEvaluator(provider Provider, groupMappings map[string][]string) *PolicyEvaluator {
+func NewPolicyEvaluator(groupProvider GroupProvider, roleProvider ElevatedRoleProvider, groupMappings map[string][]string) *PolicyEvaluator {
 	return &PolicyEvaluator{
-		provider:      provider,
+		groupProvider: groupProvider,
+		roleProvider:  roleProvider,
 		groupMappings: groupMappings,
 		cache:         make(map[string]cachedPermission),
 		cacheTTL:      defaultPermissionCacheTTL,
@@ -46,12 +48,12 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 		return nil, fmt.Errorf("missing user info")
 	}
 
-	groups, err := p.provider.GetUserGroups(ctx, userInfo)
+	groups, err := p.groupProvider.GetUserGroups(ctx, userInfo)
 	if err != nil {
 		return nil, fmt.Errorf("fetching user groups: %w", err)
 	}
 
-	elevatedRoles, err := p.provider.GetActiveElevatedRoles(ctx, userInfo)
+	elevatedRoles, err := p.roleProvider.GetActiveElevatedRoles(ctx, userInfo)
 	if err != nil {
 		return nil, fmt.Errorf("fetching elevated roles: %w", err)
 	}
