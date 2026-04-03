@@ -11,7 +11,8 @@ CMD_PACKAGE ?= ./cmd/multipass
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DOCKER_IMAGE ?= karloie/multipass
-DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
+DOCKER_BUILD_PLATFORMS ?= linux/amd64
+DOCKER_PUBLISH_PLATFORMS ?= linux/amd64
 CONFIG ?=
 
 GO_TEST_FLAGS ?= -count=1 -v
@@ -66,11 +67,11 @@ docker-login:
 
 docker-build:
 	@test -n "$(TAG)" || (echo "Usage: make docker-build TAG=v0.0.1" && exit 1)
-	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_PLATFORMS)" --push=false --update-readme=false
+	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_BUILD_PLATFORMS)" --push=false --update-readme=false
 
 docker-publish: docker-login
 	@test -n "$(TAG)" || (echo "Usage: make docker-publish TAG=v0.0.1" && exit 1)
-	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_PLATFORMS)" --update-readme=false
+	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_PUBLISH_PLATFORMS)" --update-readme=false
 
 docker-upload-readme:
 	$(SHIPKIT) docker-hub-readme -repo "$(DOCKER_IMAGE)" -readme README.md
