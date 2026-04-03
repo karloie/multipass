@@ -49,3 +49,13 @@ func TestCachedGroupProviderUsesCacheOnlyWhenContextAllows(t *testing.T) {
 		t.Fatalf("unexpected cached groups: %v", groups)
 	}
 }
+
+func TestMemoryGroupCacheMatchesWrappedUserIdentifierAlias(t *testing.T) {
+	cache := NewMemoryGroupCache(time.Hour)
+	cache.Store(&auth.UserInfo{ID: "(usr!koi)", Groups: []string{"Rolle Plattformadmin utvikling"}}, []string{"Rolle Plattformadmin utvikling"})
+
+	cached := cache.Lookup(&auth.UserInfo{ID: "koi"})
+	if len(cached) != 1 || cached[0] != "Rolle Plattformadmin utvikling" {
+		t.Fatalf("unexpected cached groups for wrapped alias: %v", cached)
+	}
+}

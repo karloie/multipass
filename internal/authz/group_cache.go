@@ -121,11 +121,7 @@ func cacheUserIdentifiers(userInfo *auth.UserInfo) []string {
 	seen := map[string]struct{}{}
 	identifiers := make([]string, 0, 8)
 	for _, candidate := range []string{userInfo.ID, userInfo.Username, userInfo.PrincipalID, userInfo.Email} {
-		trimmed := strings.TrimSpace(candidate)
-		if trimmed == "" {
-			continue
-		}
-		for _, key := range []string{trimmed, strings.ToLower(trimmed)} {
+		for _, key := range normalizedCacheUserKeys(candidate) {
 			if _, ok := seen[key]; ok {
 				continue
 			}
@@ -135,6 +131,39 @@ func cacheUserIdentifiers(userInfo *auth.UserInfo) []string {
 	}
 
 	return identifiers
+}
+
+func normalizedCacheUserKeys(candidate string) []string {
+	trimmed := strings.TrimSpace(candidate)
+	if trimmed == "" {
+		return nil
+	}
+
+	keys := []string{trimmed, strings.ToLower(trimmed)}
+	if alias := normalizeWrappedUserIdentifier(trimmed); alias != "" && alias != trimmed {
+		keys = append(keys, alias, strings.ToLower(alias))
+	}
+
+	return keys
+}
+
+func normalizeWrappedUserIdentifier(identifier string) string {
+	trimmed := strings.TrimSpace(identifier)
+	if len(trimmed) < 6 || trimmed[0] != '(' || trimmed[len(trimmed)-1] != ')' {
+		return ""
+	}
+
+	bang := strings.IndexByte(trimmed, '!')
+	if bang < 0 || bang+1 >= len(trimmed)-1 {
+		return ""
+	}
+
+	alias := strings.TrimSpace(trimmed[bang+1 : len(trimmed)-1])
+	if alias == "" {
+		return ""
+	}
+
+	return alias
 }
 
 func normalizeCachedGroups(groups []string) []string {
