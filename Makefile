@@ -72,6 +72,5 @@ docker-release: docker-login
 ci-build: build
 ci-test: test
 ci-release:
-	$(SHIPKIT) install --force goreleaser
-	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --platform "$(DOCKER_PLATFORMS)" --readme README.md --update-readme
-	$(SHIPKIT) release-goreleaser --skip-docker --clean
+	@test -n "$(TAG)" || (echo "Usage: make ci-release TAG=v0.0.1" && exit 1)
+	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_PLATFORMS)" --readme README.md --update-readme

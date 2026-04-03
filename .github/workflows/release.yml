@@ -19,15 +19,104 @@ permissions:
   contents: write
   pull-requests: read
 
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  ci:
-    uses: karloie/shipkit/.github/workflows/release.yml@v0.0.81
-    with:
-      mode: release
-      event_name: ${{ github.event_name }}
-      tool_ref: v0.0.81
-      image: karloie/multipass
-    secrets:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      release_skip: ${{ steps.plan.outputs.release_skip }}
+      tag_next: ${{ steps.plan.outputs.tag_next }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Plan release
+        id: plan
+        run: >-
+          go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81 plan
+          -mode=release
+          -bump="${{ github.event.inputs.bump || 'patch' }}"
+          -image=karloie/multipass
+          -sha="${{ github.sha }}"
+          -owner="${{ github.repository_owner }}"
+          -repo="${{ github.event.repository.name }}"
+          -use-goreleaser=false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.release_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: make ci-build
+
+  test:
+    needs: plan
+    if: needs.plan.outputs.release_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: make ci-test
+
+  tag:
+    needs:
+      - plan
+      - build
+      - test
+    if: needs.plan.outputs.release_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Create tag
+        run: >-
+          go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81 git-tag
+          -tag="${{ needs.plan.outputs.tag_next }}"
+
+  publish:
+    needs:
+      - plan
+      - tag
+    if: needs.plan.outputs.release_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.tag_next }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Publish Docker image
+        run: make ci-release TAG=${{ needs.plan.outputs.tag_next }}
+        env:
+          SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

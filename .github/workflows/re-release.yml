@@ -8,13 +8,49 @@ permissions:
   pull-requests: read
 
 jobs:
-  rerelease:
-    uses: karloie/shipkit/.github/workflows/release.yml@v0.0.81
-    with:
-      mode: rerelease
-      tool_ref: v0.0.81
-      image: karloie/multipass
-    secrets:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      release_skip: ${{ steps.plan.outputs.release_skip }}
+      tag_release: ${{ steps.plan.outputs.tag_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Resolve latest tag
+        id: plan
+        run: >-
+          go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81 plan
+          -mode=docker
+          -resolve-latest-tag=true
+          -image=karloie/multipass
+          -sha="${{ github.sha }}"
+          -owner="${{ github.repository_owner }}"
+          -repo="${{ github.event.repository.name }}"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.release_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.tag_release }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Publish Docker image
+        run: make ci-release TAG=${{ needs.plan.outputs.tag_release }}
+        env:
+          SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
