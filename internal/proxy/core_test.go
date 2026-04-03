@@ -675,6 +675,46 @@ func TestCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
 	})
 }
 
+func TestExternalHostCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
+	executeProxyTestCase(t, proxyTestCase{
+		name:                 "external host caller namespace routing resolves cluster tenant",
+		backendName:          "mimir-otlp",
+		backendType:          "prometheus",
+		requestPath:          "/otlp/v1/metrics",
+		host:                 "otlp.example.com",
+		externalPathPrefixes: []string{"/otlp/v1/metrics"},
+		trustedProxyConfig: &config.TrustedProxyConfig{
+			Enabled:      true,
+			UserHeader:   "X-Grafana-User",
+			GroupsHeader: "X-Multipass-Groups",
+			CallerHeader: "X-Multipass-Caller",
+			CallerValue:  "grafana-datasource",
+			SecretHeader: "X-Multipass-Proxy-Secret",
+			SecretValue:  "proxy-secret",
+		},
+		requestHeaders: map[string]string{
+			"X-Grafana-User":           "otel-collector-core-test",
+			"X-Multipass-Groups":       "otel-collector-core-test",
+			"X-Multipass-Caller":       "grafana-datasource",
+			"X-Multipass-Proxy-Secret": "proxy-secret",
+		},
+		authzClusterResolver: &config.ClusterResolverConfig{
+			Source: "user",
+			Mappings: map[string]string{
+				"otel-collector-core-test": "core-test",
+			},
+		},
+		backendNamespaceRouting: &config.NamespaceRoutingConfig{Mode: namespaceRoutingModeCaller},
+		expectedStatus:          http.StatusOK,
+		expectedHeaders:         map[string]string{"X-Scope-OrgID": "core-test"},
+		expectAuditEvent:        true,
+		expectAuthCall:          false,
+		expectBackendCall:       true,
+		expectedBackendPath:     "/otlp/v1/metrics",
+		expectedAuditNamespace:  "core-test",
+	})
+}
+
 func TestTempoTraceByIDResponseFiltering(t *testing.T) {
 	newTempoProxy := func(t *testing.T, responseBody string) *Proxy {
 		t.Helper()

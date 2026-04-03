@@ -1,4 +1,4 @@
-.PHONY: build run test integration-test coverage clean docker-login docker-release
+.PHONY: build run test integration-test coverage clean docker-login docker-build docker-publish docker-upload-readme docker-release
 .PHONY: ci-generate ci-build ci-test ci-integration-test ci-release ci-summary
 
 .DEFAULT_GOAL := test
@@ -64,16 +64,22 @@ docker-login:
 		echo "DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not set, using existing docker credentials"; \
 	fi
 
-docker-release: docker-login
-	@test -n "$(TAG)" || (echo "Usage: make docker-release TAG=v0.0.1" && exit 1)
-	docker buildx build --platform $(DOCKER_PLATFORMS) \
-		--build-arg BUILD_VERSION=$(TAG) \
-		--build-arg BUILD_COMMIT=$(COMMIT) \
-		-t $(DOCKER_IMAGE):$(TAG) --push .
+docker-build:
+	@test -n "$(TAG)" || (echo "Usage: make docker-build TAG=v0.0.1" && exit 1)
+	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_PLATFORMS)" --push=false --update-readme=false
+
+docker-publish: docker-login
+	@test -n "$(TAG)" || (echo "Usage: make docker-publish TAG=v0.0.1" && exit 1)
+	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_PLATFORMS)" --update-readme=false
+
+docker-upload-readme:
+	$(SHIPKIT) docker-hub-readme -repo "$(DOCKER_IMAGE)" -readme README.md
+
+docker-release: docker-publish docker-upload-readme
 
 # Shipkit CI hooks
 ci-build: build
 ci-test: test
 ci-release:
 	@test -n "$(TAG)" || (echo "Usage: make ci-release TAG=v0.0.1" && exit 1)
-	$(SHIPKIT) release-docker --image "$(DOCKER_IMAGE)" --tag "$(TAG)" --platform "$(DOCKER_PLATFORMS)" --readme README.md --update-readme
+	$(MAKE) docker-release TAG=$(TAG)

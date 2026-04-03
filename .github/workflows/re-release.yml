@@ -26,7 +26,7 @@ jobs:
       - name: "🧭 Resolve latest tag"
         id: plan
         run: >-
-          go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81 plan
+          go run github.com/karloie/shipkit/cmd/shipkit@v0.0.82 plan
           -mode=docker
           -resolve-latest-tag=true
           -image=karloie/multipass
@@ -39,8 +39,8 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
-  publish:
-    name: "🐳 Publish"
+  docker-build:
+    name: "🐳 Docker Build"
     needs: plan
     if: needs.plan.outputs.release_skip != 'true'
     runs-on: ubuntu-latest
@@ -58,9 +58,61 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: "🐳 Publish Docker image"
-        run: make ci-release TAG=${{ needs.plan.outputs.tag_release }}
+      - name: "🐳 Build Docker image"
+        run: make docker-build TAG=${{ needs.plan.outputs.tag_release }}
         env:
-          SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81
+          SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.82
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  docker-publish:
+    name: "📦 Docker Publish"
+    needs:
+      - plan
+      - docker-build
+    if: needs.plan.outputs.release_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.tag_release }}
+      - name: "🖥️ Setup QEMU"
+        uses: docker/setup-qemu-action@v3
+      - name: "🏗️ Setup Buildx"
+        uses: docker/setup-buildx-action@v3
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: "📦 Publish Docker image"
+        run: make docker-publish TAG=${{ needs.plan.outputs.tag_release }}
+        env:
+          SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.82
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  docker-upload:
+    name: "📝 Docker Upload"
+    needs:
+      - plan
+      - docker-publish
+    if: needs.plan.outputs.release_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.tag_release }}
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: "📝 Upload Docker Hub README"
+        run: make docker-upload-readme
+        env:
+          SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.82
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
