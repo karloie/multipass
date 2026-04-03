@@ -66,7 +66,10 @@ docker-login:
 
 docker-release: docker-login
 	@test -n "$(TAG)" || (echo "Usage: make docker-release TAG=v0.0.1" && exit 1)
-	docker buildx build --platform $(DOCKER_PLATFORMS) -t $(DOCKER_IMAGE):$(TAG) --push .
+	docker buildx build --platform $(DOCKER_PLATFORMS) \
+		--build-arg BUILD_VERSION=$(TAG) \
+		--build-arg BUILD_COMMIT=$(COMMIT) \
+		-t $(DOCKER_IMAGE):$(TAG) --push .
 
 # Shipkit CI hooks
 ci-build: build

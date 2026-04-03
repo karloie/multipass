@@ -9,18 +9,21 @@ permissions:
 
 jobs:
   plan:
+    name: "🧭 Plan"
     runs-on: ubuntu-latest
     outputs:
       release_skip: ${{ steps.plan.outputs.release_skip }}
       tag_release: ${{ steps.plan.outputs.tag_release }}
     steps:
-      - uses: actions/checkout@v4
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Resolve latest tag
+      - name: "🧭 Resolve latest tag"
         id: plan
         run: >-
           go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81 plan
@@ -37,20 +40,25 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   publish:
+    name: "🐳 Publish"
     needs: plan
     if: needs.plan.outputs.release_skip != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ needs.plan.outputs.tag_release }}
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: actions/setup-go@v5
+      - name: "🖥️ Setup QEMU"
+        uses: docker/setup-qemu-action@v3
+      - name: "🏗️ Setup Buildx"
+        uses: docker/setup-buildx-action@v3
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Publish Docker image
+      - name: "🐳 Publish Docker image"
         run: make ci-release TAG=${{ needs.plan.outputs.tag_release }}
         env:
           SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81

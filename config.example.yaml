@@ -115,6 +115,16 @@ authz:
   #     otel-collector-core: core
   #     otel-collector-core-test: core-test
 
+  # Shared OTLP ingest can also resolve the tenant directly from the caller
+  # identity without requiring tm_namespace or tm_segment in the request.
+  # That keeps each cluster on one backend tenant while the collector stamps
+  # a segment label such as dev or ops.
+  # clusterResolver:
+  #   source: user
+  #   mappings:
+  #     otel-collector-core: core
+  #     otel-collector-core-test: core-test
+
 # === Audit Logging ===
 # Log all access attempts for compliance and security analysis
 audit:
@@ -254,8 +264,7 @@ backends:
   #   externalPathPrefixes:
   #     - /otlp/v1/metrics
   #   namespaceRouting:
-  #     mode: request
-  #     parameter: tm_segment
+  #     mode: caller
 
   # Example fixed-namespace aliases for a first rollout.
   # Each alias is bound to one namespace. Caller-supplied ?namespace=

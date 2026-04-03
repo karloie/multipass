@@ -648,6 +648,97 @@ func TestFixedBackendNamespaceOverridesRequestNamespace(t *testing.T) {
 	})
 }
 
+func TestCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
+	executeProxyTestCase(t, proxyTestCase{
+		name:        "caller namespace routing resolves cluster tenant",
+		backendName: "mimir-otlp",
+		backendType: "prometheus",
+		requestPath: "/mimir-otlp/api/v1/push",
+		authToken:   "test-token",
+		authzClusterResolver: &config.ClusterResolverConfig{
+			Source: "user",
+			Mappings: map[string]string{
+				"otel-collector-core-test": "core-test",
+			},
+		},
+		authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
+			return &auth.UserInfo{ID: "otel-collector-core-test"}, nil
+		},
+		backendNamespaceRouting: &config.NamespaceRoutingConfig{Mode: namespaceRoutingModeCaller},
+		expectedStatus:          http.StatusOK,
+		expectedHeaders:         map[string]string{"X-Scope-OrgID": "core-test"},
+		expectAuditEvent:        true,
+		expectAuthCall:          true,
+		expectBackendCall:       true,
+		expectedBackendPath:     "/api/v1/push",
+		expectedAuditNamespace:  "core-test",
+	})
+}
+
+func TestTempoTraceByIDResponseFiltering(t *testing.T) {
+	newTempoProxy := func(t *testing.T, responseBody string) *Proxy {
+		t.Helper()
+
+		backendServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(responseBody))
+		}))
+		cfg := &config.Config{
+			Server: config.ServerConfig{Port: 8080},
+			Auth:   config.AuthConfig{Provider: "oidc", OIDC: config.OIDCConfig{IssuerURL: "https://issuer", ClientID: "client", ClientSecret: "secret", RedirectURL: "https://example.com/login/generic_oauth"}},
+			Backends: map[string]config.BackendConfig{
+				"tempo-core-dev": {
+					Type:      "prometheus",
+					Endpoint:  backendServer.URL,
+					Namespace: "core",
+					QueryRewrite: &queryrewrite.RewriteConfig{Semantics: []queryrewrite.SemanticRule{{
+						Language: "traceql",
+						Params:   []string{"q"},
+						Routes:   []string{"/api/search"},
+						Require:  []queryrewrite.MatcherRequirement{{Name: "resource.segment", Value: "dev"}},
+					}}},
+				},
+			},
+		}
+
+		proxy, err := New(cfg, &jwtAuthProvider{}, &browserAuthProvider{}, nil, audit.NewMemoryStore())
+		if err != nil {
+			backendServer.Close()
+			t.Fatalf("Failed to create proxy: %v", err)
+		}
+		oldProxy := proxy.backends["tempo-core-dev"]
+		proxy.backends["tempo-core-dev"] = oldProxy
+		t.Cleanup(backendServer.Close)
+		return proxy
+	}
+
+	t.Run("allows matching segment", func(t *testing.T) {
+		proxy := newTempoProxy(t, `{"resourceSpans":[{"resource":{"attributes":[{"key":"segment","value":{"stringValue":"dev"}}]}}]}`)
+		req := httptest.NewRequest(http.MethodGet, "/tempo-core-dev/api/traces/trace-1", nil)
+		req.Header.Set("Authorization", "Bearer "+createTestJWT("user123"))
+		rr := httptest.NewRecorder()
+
+		proxy.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("hides mismatched segment", func(t *testing.T) {
+		proxy := newTempoProxy(t, `{"resourceSpans":[{"resource":{"attributes":[{"key":"segment","value":{"stringValue":"ops"}}]}}]}`)
+		req := httptest.NewRequest(http.MethodGet, "/tempo-core-dev/api/traces/trace-1", nil)
+		req.Header.Set("Authorization", "Bearer "+createTestJWT("user123"))
+		rr := httptest.NewRecorder()
+
+		proxy.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected status 404, got %d: %s", rr.Code, rr.Body.String())
+		}
+	})
+}
+
 func TestReadinessEndpoint(t *testing.T) {
 	t.Run("ready when all backends respond", func(t *testing.T) {
 		backendServer, _ := captureBackend()

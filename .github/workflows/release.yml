@@ -25,18 +25,21 @@ concurrency:
 
 jobs:
   plan:
+    name: "🧭 Plan"
     runs-on: ubuntu-latest
     outputs:
       release_skip: ${{ steps.plan.outputs.release_skip }}
       tag_next: ${{ steps.plan.outputs.tag_next }}
     steps:
-      - uses: actions/checkout@v4
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Plan release
+      - name: "🧭 Plan release"
         id: plan
         run: >-
           go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81 plan
@@ -54,30 +57,37 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   build:
+    name: "🏗️ Build"
     needs: plan
     if: needs.plan.outputs.release_skip != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build
+      - name: "🏗️ Build"
         run: make ci-build
 
   test:
+    name: "🧪 Test"
     needs: plan
     if: needs.plan.outputs.release_skip != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Test
+      - name: "🧪 Test"
         run: make ci-test
 
   tag:
+    name: "🏷️ Tag"
     needs:
       - plan
       - build
@@ -85,38 +95,45 @@ jobs:
     if: needs.plan.outputs.release_skip != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Configure git
+      - name: "⚙️ Configure git"
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      - name: Create tag
+      - name: "🏷️ Create tag"
         run: >-
           go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81 git-tag
           -tag="${{ needs.plan.outputs.tag_next }}"
 
   publish:
+    name: "🐳 Publish"
     needs:
       - plan
       - tag
     if: needs.plan.outputs.release_skip != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ needs.plan.outputs.tag_next }}
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: actions/setup-go@v5
+      - name: "🖥️ Setup QEMU"
+        uses: docker/setup-qemu-action@v3
+      - name: "🏗️ Setup Buildx"
+        uses: docker/setup-buildx-action@v3
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Publish Docker image
+      - name: "🐳 Publish Docker image"
         run: make ci-release TAG=${{ needs.plan.outputs.tag_next }}
         env:
           SHIPKIT: go run github.com/karloie/shipkit/cmd/shipkit@v0.0.81

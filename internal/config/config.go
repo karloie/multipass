@@ -568,6 +568,10 @@ func (c *Config) validateNamespaceRouting(name string, backend BackendConfig) er
 		if strings.TrimSpace(backend.Namespace) == "" {
 			return fmt.Errorf("backend '%s' namespace is required when namespaceRouting mode is fixed", name)
 		}
+	case "caller":
+		if !c.Authz.ClusterResolver.HasMappings() {
+			return fmt.Errorf("backend '%s' namespaceRouting mode caller requires authz.clusterResolver mappings", name)
+		}
 	case "request":
 		if backend.NamespaceRouting.Parameter == "" {
 			return fmt.Errorf("backend '%s' namespaceRouting parameter is required when mode is request", name)
@@ -581,7 +585,7 @@ func (c *Config) validateNamespaceRouting(name string, backend BackendConfig) er
 			return fmt.Errorf("backend '%s' namespace requires authz.namespaceClassifier when namespaceRouting mode is request", name)
 		}
 	default:
-		return fmt.Errorf("backend '%s' namespaceRouting mode must be one of: fixed, request", name)
+		return fmt.Errorf("backend '%s' namespaceRouting mode must be one of: fixed, request, caller", name)
 	}
 
 	return nil

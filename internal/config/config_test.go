@@ -130,6 +130,33 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 		wantErr bool
 	}{
 		{
+			name: "caller routing requires cluster resolver",
+			backend: BackendConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				NamespaceRouting: &NamespaceRoutingConfig{
+					Mode: "caller",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "caller routing valid with cluster resolver",
+			backend: BackendConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				NamespaceRouting: &NamespaceRoutingConfig{
+					Mode: "caller",
+				},
+			},
+			authz: AuthzConfig{
+				ClusterResolver: ClusterResolverConfig{
+					Source:   "user",
+					Mappings: map[string]string{"otel-collector-core-test": "core-test"},
+				},
+			},
+		},
+		{
 			name: "request routing requires parameter",
 			backend: BackendConfig{
 				Type:     "prometheus",
@@ -419,7 +446,7 @@ func TestConfigValidateQueryRewrite(t *testing.T) {
 		{
 			name: "query rewrite semantic rules reject unsupported language",
 			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{Semantics: []queryrewrite.SemanticRule{{
-				Language: "logql",
+				Language: "pql",
 				Params:   []string{"query"},
 				Require:  []queryrewrite.MatcherRequirement{{Name: "namespace", Value: "{{namespace}}"}},
 			}}}),

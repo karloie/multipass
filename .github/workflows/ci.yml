@@ -16,14 +16,17 @@ concurrency:
 
 jobs:
   build-and-test:
+    name: "🧪 Build And Test"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+      - name: "🧰 Setup Go"
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build
+      - name: "🏗️ Build"
         run: make ci-build
-      - name: Test
+      - name: "🧪 Test"
         run: make ci-test

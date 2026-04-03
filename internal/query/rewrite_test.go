@@ -163,6 +163,56 @@ func TestRewriteTenantLabelCustomName(t *testing.T) {
 	}
 }
 
+func TestRewriteLogQLSemantics(t *testing.T) {
+	rewritten := mustRewriteWithError(t, url.Values{"query": {"{app=\"api\"} |= \"error\""}}, &RewriteConfig{Semantics: []SemanticRule{{
+		Language: semanticLanguageLogQL,
+		Params:   []string{"query"},
+		Routes:   []string{"/loki/api/v1/query"},
+		Require:  []MatcherRequirement{{Name: "segment", Value: "dev"}},
+	}}}, Context{Route: "/loki/api/v1/query"})
+
+	if got := rewritten.Get("query"); got != "{app=\"api\",segment=\"dev\"} |= \"error\"" {
+		t.Fatalf("expected semantic logql enforcement, got %q", got)
+	}
+}
+
+func TestRewriteLogQLSemanticConflict(t *testing.T) {
+	_, err := RewriteWithError(url.Values{"query": {"{segment=\"ops\"}"}}, &RewriteConfig{Semantics: []SemanticRule{{
+		Language: semanticLanguageLogQL,
+		Params:   []string{"query"},
+		Routes:   []string{"/loki/api/v1/query"},
+		Require:  []MatcherRequirement{{Name: "segment", Value: "dev"}},
+	}}}, Context{Route: "/loki/api/v1/query"})
+	if err == nil {
+		t.Fatal("expected logql semantic conflict error, got nil")
+	}
+}
+
+func TestRewriteTraceQLSemantics(t *testing.T) {
+	rewritten := mustRewriteWithError(t, url.Values{"q": {"{ resource.service.name = \"api\" }"}}, &RewriteConfig{Semantics: []SemanticRule{{
+		Language: semanticLanguageTraceQL,
+		Params:   []string{"q"},
+		Routes:   []string{"/api/search"},
+		Require:  []MatcherRequirement{{Name: "resource.segment", Value: "ops"}},
+	}}}, Context{Route: "/api/search"})
+
+	if got := rewritten.Get("q"); got != "{ resource.service.name = \"api\" && resource.segment = \"ops\" }" {
+		t.Fatalf("expected semantic traceql enforcement, got %q", got)
+	}
+}
+
+func TestRewriteTraceQLSemanticConflict(t *testing.T) {
+	_, err := RewriteWithError(url.Values{"q": {"{ resource.segment = \"dev\" }"}}, &RewriteConfig{Semantics: []SemanticRule{{
+		Language: semanticLanguageTraceQL,
+		Params:   []string{"q"},
+		Routes:   []string{"/api/search"},
+		Require:  []MatcherRequirement{{Name: "resource.segment", Value: "ops"}},
+	}}}, Context{Route: "/api/search"})
+	if err == nil {
+		t.Fatal("expected traceql semantic conflict error, got nil")
+	}
+}
+
 func TestRewritePromQLSemanticConflict(t *testing.T) {
 	_, err := RewriteWithError(url.Values{"query": {"up{namespace=\"prod\"}"}}, promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "utv"}), Context{Namespace: "utv", Route: "/api/v1/query"})
 	if err == nil {
@@ -200,6 +250,24 @@ func TestValidate(t *testing.T) {
 		{
 			name: "semantic rule valid",
 			cfg:  promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "{{namespace}}"}),
+		},
+		{
+			name: "logql semantic rule valid",
+			cfg: &RewriteConfig{Semantics: []SemanticRule{{
+				Language: semanticLanguageLogQL,
+				Params:   []string{"query"},
+				Routes:   []string{"/loki/api/v1/query"},
+				Require:  []MatcherRequirement{{Name: "segment", Value: "dev"}},
+			}}},
+		},
+		{
+			name: "traceql semantic rule valid",
+			cfg: &RewriteConfig{Semantics: []SemanticRule{{
+				Language: semanticLanguageTraceQL,
+				Params:   []string{"q"},
+				Routes:   []string{"/api/search"},
+				Require:  []MatcherRequirement{{Name: "resource.segment", Value: "dev"}},
+			}}},
 		},
 		{
 			name: "semantic rule requires params",

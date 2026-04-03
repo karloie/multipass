@@ -9,11 +9,13 @@ RUN go mod download
 COPY . .
 
 ARG VERSION=v0.0.1
+ARG BUILD_VERSION=
 ARG COMMIT=unknown
+ARG BUILD_COMMIT=
 ARG GO_BUILD_TAGS=
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -tags "${GO_BUILD_TAGS}" \
-    -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -ldflags "-X main.version=${BUILD_VERSION:-$VERSION} -X main.commit=${BUILD_COMMIT:-$COMMIT}" \
     -o /multipass \
     ./cmd/multipass
 

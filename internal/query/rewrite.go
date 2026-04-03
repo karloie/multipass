@@ -18,12 +18,14 @@ const (
 
 	semanticLanguagePromQL   = "promql"
 	semanticLanguageSelector = "selector"
+	semanticLanguageLogQL    = "logql"
+	semanticLanguageTraceQL  = "traceql"
 
 	tenantLabelDefaultName  = "namespace"
 	tenantLabelDefaultValue = "{{namespace}}"
 	tenantLabelModeDefault  = "validate-or-append"
 
-	semanticLanguageConstraint = "promql, selector; logql is intentionally unsupported until there is a licensing-safe parser path"
+	semanticLanguageConstraint = "promql, selector, logql, traceql"
 )
 
 var (
@@ -319,7 +321,16 @@ func validateSemanticRule(prefix string, rule SemanticRule) error {
 		return fmt.Errorf("%s language is required", prefix)
 	}
 	switch language {
-	case semanticLanguagePromQL, semanticLanguageSelector:
+	case semanticLanguagePromQL, semanticLanguageSelector, semanticLanguageLogQL:
+	case semanticLanguageTraceQL:
+		for i, requirement := range rule.Require {
+			switch strings.TrimSpace(requirement.Operator) {
+			case "", "=":
+				continue
+			default:
+				return fmt.Errorf("%s matcher %d: operator must be one of: =", prefix, i+1)
+			}
+		}
 	default:
 		return fmt.Errorf("%s language must be one of: %s", prefix, semanticLanguageConstraint)
 	}

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -45,6 +47,7 @@ const (
 
 	namespaceRoutingModeRequest = "request"
 	namespaceRoutingModeFixed   = "fixed"
+	namespaceRoutingModeCaller  = "caller"
 	namespaceRoutingSourceQuery = "query"
 	namespaceRoutingSourceBody  = "body"
 	namespaceRoutingSourceBoth  = "both"
@@ -61,7 +64,10 @@ const (
 	errMsgAuthzFailed      = "Authorization check failed"
 	errMsgAccessDenied     = "Access denied: no permission for namespace '%s'"
 	errMsgNamespaceMissing = "Missing namespace routing parameter '%s'"
+	errMsgTempoTraceHidden = "Trace not found"
 )
+
+var errTempoTraceSegmentMismatch = errors.New("tempo trace segment mismatch")
 
 // Proxy handles requests and routes to backends.
 type Proxy struct {
@@ -124,6 +130,16 @@ func New(cfg *config.Config, authProvider auth.Provider, browserAuth browserAuth
 			req.Host = req.URL.Host
 			p.injectBackendHeaders(req, backendConfig, backendName)
 		}
+		proxy.ModifyResponse = func(resp *http.Response) error {
+			return p.modifyBackendResponse(resp, backendName, backendConfig)
+		}
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, errTempoTraceSegmentMismatch) {
+				http.Error(w, errMsgTempoTraceHidden, http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadGateway)
+		}
 
 		p.backends[name] = proxy
 		slog.Info("configured backend",
@@ -136,6 +152,152 @@ func New(cfg *config.Config, authProvider auth.Provider, browserAuth browserAuth
 	p.setupRoutes()
 
 	return p, nil
+}
+
+func (p *Proxy) modifyBackendResponse(resp *http.Response, backendName string, backendConfig config.BackendConfig) error {
+	if resp == nil {
+		return nil
+	}
+	if !shouldFilterTempoTraceResponse(backendName, backendConfig, resp) {
+		return nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return err
+	}
+
+	segment := requiredTempoTraceSegment(backendConfig)
+	if segment == "" {
+		resp.Body = io.NopCloser(strings.NewReader(string(body)))
+		resp.ContentLength = int64(len(body))
+		resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		return nil
+	}
+	if !jsonContainsSegment(payload, segment) {
+		return errTempoTraceSegmentMismatch
+	}
+
+	resp.Body = io.NopCloser(strings.NewReader(string(body)))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+	return nil
+}
+
+func shouldFilterTempoTraceResponse(backendName string, backendConfig config.BackendConfig, resp *http.Response) bool {
+	if backendName == "" || resp == nil || resp.Request == nil {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(backendName)), "tempo-") && backendName != "tempo" {
+		return false
+	}
+	if requiredTempoTraceSegment(backendConfig) == "" {
+		return false
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return false
+	}
+	routePath := strings.TrimSpace(resp.Request.URL.Path)
+	if routePath == "" {
+		routePath = "/"
+	}
+	if !strings.HasPrefix(routePath, "/") {
+		routePath = "/" + routePath
+	}
+	routePath = path.Clean(routePath)
+	return strings.HasPrefix(routePath, "/api/traces/") || strings.HasPrefix(routePath, "/api/v2/traces/")
+}
+
+func requiredTempoTraceSegment(backendConfig config.BackendConfig) string {
+	if backendConfig.QueryRewrite == nil {
+		return ""
+	}
+	for _, rule := range backendConfig.QueryRewrite.Semantics {
+		if strings.TrimSpace(strings.ToLower(rule.Language)) != "traceql" {
+			continue
+		}
+		for _, requirement := range rule.Require {
+			name := strings.TrimSpace(requirement.Name)
+			if name == "resource.segment" || name == "segment" {
+				return strings.TrimSpace(requirement.Value)
+			}
+		}
+	}
+	return ""
+}
+
+func jsonContainsSegment(value any, required string) bool {
+	trimmedRequired := strings.TrimSpace(required)
+	if trimmedRequired == "" {
+		return true
+	}
+
+	switch typed := value.(type) {
+	case map[string]any:
+		if objectContainsSegment(typed, trimmedRequired) {
+			return true
+		}
+		for _, nested := range typed {
+			if jsonContainsSegment(nested, trimmedRequired) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if jsonContainsSegment(item, trimmedRequired) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func objectContainsSegment(object map[string]any, required string) bool {
+	for _, key := range []string{"segment", "resource.segment"} {
+		if value, ok := object[key]; ok && jsonScalarEquals(value, required) {
+			return true
+		}
+	}
+
+	key, ok := object["key"].(string)
+	if !ok {
+		return false
+	}
+	if key != "segment" && key != "resource.segment" {
+		return false
+	}
+	value, ok := object["value"]
+	if !ok {
+		return false
+	}
+	return jsonScalarEquals(value, required)
+}
+
+func jsonScalarEquals(value any, required string) bool {
+	switch typed := value.(type) {
+	case string:
+		return typed == required
+	case map[string]any:
+		for _, key := range []string{"stringValue", "value", "text"} {
+			if nested, ok := typed[key]; ok && jsonScalarEquals(nested, required) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if jsonScalarEquals(item, required) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // setupRoutes configures the HTTP router.
@@ -313,6 +475,12 @@ func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig confi
 		switch backendConfig.NamespaceRouting.Mode {
 		case namespaceRoutingModeFixed:
 			return strings.TrimSpace(backendConfig.Namespace), nil
+		case namespaceRoutingModeCaller:
+			cluster := authzConfig.ClusterResolver.ResolveCluster(userInfo)
+			if cluster == "" {
+				return "", fmt.Errorf("unable to resolve cluster for caller namespace routing")
+			}
+			return resolveNamespaceAliases(authzConfig, cluster), nil
 		case namespaceRoutingModeRequest:
 			if r == nil {
 				return "", fmt.Errorf(errMsgNamespaceMissing, backendConfig.NamespaceRouting.Parameter)
