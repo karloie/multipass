@@ -43,7 +43,7 @@ func TestPolicyEvaluatorCachesPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected evaluation error: %v", err)
 	}
-	permission.Groups[0] = "mutated"
+	permission.ExternalGroups[0] = "mutated"
 
 	permission, err = evaluator.EvaluatePermissions(context.Background(), &auth.UserInfo{ID: "user-123"})
 	if err != nil {
@@ -53,8 +53,8 @@ func TestPolicyEvaluatorCachesPermissions(t *testing.T) {
 	if provider.groupCalls != 1 || provider.elevatedRoleCalls != 1 {
 		t.Fatalf("expected one provider call per source, got groups=%d elevated_roles=%d", provider.groupCalls, provider.elevatedRoleCalls)
 	}
-	if permission.Groups[0] != "team-platform" {
-		t.Fatalf("expected cached permission to be isolated from mutation, got %q", permission.Groups[0])
+	if permission.ExternalGroups[0] != "team-platform" {
+		t.Fatalf("expected cached permission to be isolated from mutation, got %q", permission.ExternalGroups[0])
 	}
 	if len(permission.AllowedNamespaces) != 3 {
 		t.Fatalf("unexpected namespace count: got %d want 3", len(permission.AllowedNamespaces))
@@ -81,6 +81,55 @@ func TestPolicyEvaluatorCacheExpires(t *testing.T) {
 
 	if provider.groupCalls != 2 || provider.elevatedRoleCalls != 2 {
 		t.Fatalf("expected cache miss after expiry, got groups=%d elevated_roles=%d", provider.groupCalls, provider.elevatedRoleCalls)
+	}
+}
+
+func TestPolicyEvaluatorResolvesInternalRolesFromExternalGroups(t *testing.T) {
+	provider := &countingProvider{groups: []string{"Rolle Utvikler", "Rolle Gjest"}}
+	evaluator := NewPolicyEvaluatorWithRoleMappings(provider, provider,
+		map[string][]string{
+			"dev": {"team-a.dev", "team-a.test"},
+			"man": {"team-a.readonly"},
+		},
+		map[string][]string{
+			"Rolle Utvikler": {"dev"},
+			"Rolle Gjest":    {"man"},
+		},
+	)
+
+	permission, err := evaluator.EvaluatePermissions(context.Background(), &auth.UserInfo{ID: "user-123"})
+	if err != nil {
+		t.Fatalf("unexpected evaluation error: %v", err)
+	}
+
+	wantExternalGroups := []string{"Rolle Utvikler", "Rolle Gjest"}
+	if len(permission.ExternalGroups) != len(wantExternalGroups) {
+		t.Fatalf("unexpected external group count: got %d want %d (%v)", len(permission.ExternalGroups), len(wantExternalGroups), permission.ExternalGroups)
+	}
+	for index, group := range wantExternalGroups {
+		if permission.ExternalGroups[index] != group {
+			t.Fatalf("unexpected external group at %d: got %q want %q", index, permission.ExternalGroups[index], group)
+		}
+	}
+
+	wantInternalRoles := []string{"dev", "man"}
+	if len(permission.InternalRoles) != len(wantInternalRoles) {
+		t.Fatalf("unexpected internal role count: got %d want %d (%v)", len(permission.InternalRoles), len(wantInternalRoles), permission.InternalRoles)
+	}
+	for index, role := range wantInternalRoles {
+		if permission.InternalRoles[index] != role {
+			t.Fatalf("unexpected internal role at %d: got %q want %q", index, permission.InternalRoles[index], role)
+		}
+	}
+
+	wantNamespaces := []string{"team-a.dev", "team-a.readonly", "team-a.test"}
+	if len(permission.AllowedNamespaces) != len(wantNamespaces) {
+		t.Fatalf("unexpected namespace count: got %d want %d (%v)", len(permission.AllowedNamespaces), len(wantNamespaces), permission.AllowedNamespaces)
+	}
+	for index, namespace := range wantNamespaces {
+		if permission.AllowedNamespaces[index] != namespace {
+			t.Fatalf("unexpected namespace at %d: got %q want %q", index, permission.AllowedNamespaces[index], namespace)
+		}
 	}
 }
 

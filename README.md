@@ -34,6 +34,12 @@ Multipass solves that at the edge:
 - **Data minimization** — keep identity, authorization, and audit decisions at the edge without pulling more backend data into Multipass than necessary
 - **Auditability** — access decisions logged in one place and easy to ship onward
 
+Authorization is designed in two layers:
+
+- External IdP groups or roles come from the validated JWT unchanged
+- Multipass maps those external values to internal roles such as `admin`, `devops`, `dev`, and `man`
+- Namespace access and temporary PIM approvals use the internal roles
+
 ### Supported Applications
 
 - **jwt**: JWT-authenticated systems (LGTM, OpenSearch, Elasticsearch) - see [API.md](doc/API.md)

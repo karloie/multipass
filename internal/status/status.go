@@ -57,7 +57,8 @@ type currentUser struct {
 	TenantID             string   `json:"tenant_id,omitempty"`
 	Email                string   `json:"email,omitempty"`
 	Name                 string   `json:"name,omitempty"`
-	Groups               []string `json:"groups,omitempty"`
+	ExternalGroups       []string `json:"external_groups,omitempty"`
+	InternalRoles        []string `json:"internal_roles,omitempty"`
 	RawAllowedNamespaces []string `json:"raw_allowed_namespaces,omitempty"`
 	AllowedNamespaces    []string `json:"allowed_namespaces,omitempty"`
 	ElevatedRoles        []string `json:"elevated_roles,omitempty"`
@@ -152,7 +153,8 @@ func (h *Handler) currentUserStatus(r *http.Request) currentUser {
 		if err != nil {
 			result.PermissionsError = err.Error()
 		} else if permission != nil {
-			result.Groups = append([]string(nil), permission.Groups...)
+			result.ExternalGroups = append([]string(nil), permission.ExternalGroups...)
+			result.InternalRoles = append([]string(nil), permission.InternalRoles...)
 			result.RawAllowedNamespaces = append([]string(nil), permission.AllowedNamespaces...)
 			result.AllowedNamespaces = displayAllowedNamespaces(h.config, userInfo, permission.AllowedNamespaces)
 			result.ElevatedRoles = elevatedRoleNames(permission.ElevatedRoles)

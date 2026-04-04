@@ -170,7 +170,8 @@ func TestHandlerReportsCurrentUserGroups(t *testing.T) {
 			Name:        "Karl Example",
 		}},
 		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
-			Groups:            []string{"team-platform", "admins"},
+			ExternalGroups:    []string{"Rolle Utvikler", "Rolle Plattformadmin utvikling"},
+			InternalRoles:     []string{"dev", "admin"},
 			AllowedNamespaces: []string{"default", "monitoring"},
 			ElevatedRoles:     []authz.ElevatedRole{{Role: "Reader"}},
 		}},
@@ -196,8 +197,11 @@ func TestHandlerReportsCurrentUserGroups(t *testing.T) {
 	if got.CurrentUser.Username != "karl" {
 		t.Fatalf("unexpected current user username %q", got.CurrentUser.Username)
 	}
-	if len(got.CurrentUser.Groups) != 2 {
-		t.Fatalf("expected 2 active groups, got %+v", got.CurrentUser.Groups)
+	if !reflect.DeepEqual(got.CurrentUser.ExternalGroups, []string{"Rolle Utvikler", "Rolle Plattformadmin utvikling"}) {
+		t.Fatalf("expected external groups, got %+v", got.CurrentUser.ExternalGroups)
+	}
+	if !reflect.DeepEqual(got.CurrentUser.InternalRoles, []string{"dev", "admin"}) {
+		t.Fatalf("expected internal roles, got %+v", got.CurrentUser.InternalRoles)
 	}
 	if !reflect.DeepEqual(got.CurrentUser.RawAllowedNamespaces, []string{"default", "monitoring"}) {
 		t.Fatalf("expected raw namespaces, got %+v", got.CurrentUser.RawAllowedNamespaces)

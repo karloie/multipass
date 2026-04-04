@@ -719,7 +719,7 @@ func (p *Proxy) logAudit(ctx context.Context, userInfo *auth.UserInfo, backend, 
 	}
 
 	if perms != nil {
-		event.Groups = perms.Groups
+		event.Groups = perms.ExternalGroups
 		if len(perms.ElevatedRoles) > 0 {
 			event.ElevatedAccessActive = true
 			event.ElevatedRole = perms.ElevatedRoles[0].Role

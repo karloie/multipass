@@ -289,6 +289,127 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 	}
 }
 
+func TestConfigValidatePIM(t *testing.T) {
+	tests := []struct {
+		name    string
+		pim     PIMConfig
+		authz   AuthzConfig
+		wantErr bool
+	}{
+		{
+			name: "requires authz enabled",
+			pim: PIMConfig{
+				Enabled: true,
+				Roles: map[string]PIMRoleConfig{
+					"admin": {Approver: "approver@example.com", MaxDuration: "1h"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "requires mapped role",
+			pim: PIMConfig{
+				Enabled: true,
+				Roles: map[string]PIMRoleConfig{
+					"admin": {Approver: "approver@example.com", MaxDuration: "1h"},
+				},
+			},
+			authz:   AuthzConfig{Enabled: true, Provider: "token", GroupMappings: map[string][]string{"dev": {"ns1"}}},
+			wantErr: true,
+		},
+		{
+			name: "accepts valid config",
+			pim: PIMConfig{
+				Enabled:         true,
+				DefaultDuration: "30m",
+				Roles: map[string]PIMRoleConfig{
+					"admin": {Approver: "approver@example.com", MaxDuration: "1h"},
+				},
+			},
+			authz: AuthzConfig{Enabled: true, Provider: "token", GroupMappings: map[string][]string{"admin": {"*"}}},
+		},
+		{
+			name: "accepts approver groups",
+			pim: PIMConfig{
+				Enabled: true,
+				Roles: map[string]PIMRoleConfig{
+					"admin": {ApproverGroups: []string{"Leder"}, MaxDuration: "1h"},
+				},
+			},
+			authz: AuthzConfig{Enabled: true, Provider: "token", GroupMappings: map[string][]string{"admin": {"*"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newTestConfig(BackendConfig{Type: "generic", Endpoint: "http://example"})
+			cfg.Authz = tt.authz
+			cfg.PIM = tt.pim
+
+			err := cfg.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigValidateAuthzRoleMappings(t *testing.T) {
+	tests := []struct {
+		name    string
+		authz   AuthzConfig
+		wantErr bool
+	}{
+		{
+			name: "rejects unknown internal role",
+			authz: AuthzConfig{
+				Enabled:  true,
+				Provider: "token",
+				GroupMappings: map[string][]string{
+					"dev": {"team-a.dev"},
+				},
+				RoleMappings: map[string][]string{
+					"Rolle Plattformadmin utvikling": {"admin"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "accepts external to internal role mapping",
+			authz: AuthzConfig{
+				Enabled:  true,
+				Provider: "token",
+				GroupMappings: map[string][]string{
+					"admin": {"*"},
+					"dev":   {"team-a.dev"},
+				},
+				RoleMappings: map[string][]string{
+					"Rolle Plattformadmin utvikling": {"admin"},
+					"Rolle Utvikler":                 {"dev"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newTestConfig(BackendConfig{Type: "generic", Endpoint: "http://example"})
+			cfg.Authz = tt.authz
+
+			err := cfg.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestNamespaceClassifierClassify(t *testing.T) {
 	classifier := NamespaceClassifierConfig{
 		DefaultSegment: "dev",

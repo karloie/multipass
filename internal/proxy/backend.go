@@ -87,7 +87,7 @@ func (p *Proxy) injectWebHeaders(req *http.Request, webConfig *config.WebConfig)
 	}
 
 	if webConfig.RoleHeader != "" {
-		if role := resolveMappedRole(groups, webConfig.RoleMappings); role != "" {
+		if role := resolveMappedRole(resolveWebRoleInputs(req, userInfo), webConfig.RoleMappings); role != "" {
 			req.Header.Set(webConfig.RoleHeader, role)
 		}
 	}
@@ -105,13 +105,21 @@ func resolveWebUser(userInfo *auth.UserInfo) string {
 
 func resolveWebGroups(req *http.Request, userInfo *auth.UserInfo) []string {
 	perms, ok := req.Context().Value(permissionsKey).(*authz.Permission)
-	if ok && perms != nil && len(perms.Groups) > 0 {
-		return perms.Groups
+	if ok && perms != nil && len(perms.ExternalGroups) > 0 {
+		return perms.ExternalGroups
 	}
 	if userInfo != nil && len(userInfo.Groups) > 0 {
 		return userInfo.Groups
 	}
 	return nil
+}
+
+func resolveWebRoleInputs(req *http.Request, userInfo *auth.UserInfo) []string {
+	perms, ok := req.Context().Value(permissionsKey).(*authz.Permission)
+	if ok && perms != nil && len(perms.InternalRoles) > 0 {
+		return perms.InternalRoles
+	}
+	return resolveWebGroups(req, userInfo)
 }
 
 func resolveMappedRole(groups []string, roleMappings map[string]string) string {

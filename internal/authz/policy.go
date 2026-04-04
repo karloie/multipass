@@ -22,6 +22,7 @@ type PolicyEvaluator struct {
 	groupProvider GroupProvider
 	roleProvider  ElevatedRoleProvider
 	groupMappings map[string][]string // group -> allowed namespaces
+	roleMappings  map[string][]string // external group/role -> internal roles
 	cache         map[string]cachedPermission
 	cacheMu       sync.RWMutex
 	cacheTTL      time.Duration
@@ -29,10 +30,15 @@ type PolicyEvaluator struct {
 }
 
 func NewPolicyEvaluator(groupProvider GroupProvider, roleProvider ElevatedRoleProvider, groupMappings map[string][]string) *PolicyEvaluator {
+	return NewPolicyEvaluatorWithRoleMappings(groupProvider, roleProvider, groupMappings, nil)
+}
+
+func NewPolicyEvaluatorWithRoleMappings(groupProvider GroupProvider, roleProvider ElevatedRoleProvider, groupMappings map[string][]string, roleMappings map[string][]string) *PolicyEvaluator {
 	return &PolicyEvaluator{
 		groupProvider: groupProvider,
 		roleProvider:  roleProvider,
 		groupMappings: groupMappings,
+		roleMappings:  cloneStringSlicesMap(roleMappings),
 		cache:         make(map[string]cachedPermission),
 		cacheTTL:      defaultPermissionCacheTTL,
 		now:           time.Now,
@@ -52,6 +58,8 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 	if err != nil {
 		return nil, fmt.Errorf("fetching user groups: %w", err)
 	}
+	externalGroups := normalizeGroups(groups)
+	internalRoles := p.resolveInternalRoles(externalGroups)
 
 	elevatedRoles, err := p.roleProvider.GetActiveElevatedRoles(ctx, userInfo)
 	if err != nil {
@@ -59,7 +67,15 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 	}
 
 	namespacesMap := make(map[string]bool)
-	for _, group := range groups {
+	for _, group := range externalGroups {
+		if namespaces, ok := p.groupMappings[group]; ok {
+			for _, ns := range namespaces {
+				namespacesMap[ns] = true
+			}
+		}
+	}
+
+	for _, group := range internalRoles {
 		if namespaces, ok := p.groupMappings[group]; ok {
 			for _, ns := range namespaces {
 				namespacesMap[ns] = true
@@ -83,13 +99,72 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 
 	permission := &Permission{
 		UserID:            permissionUserID(userInfo),
-		Groups:            append([]string(nil), groups...),
+		ExternalGroups:    append([]string(nil), externalGroups...),
+		InternalRoles:     append([]string(nil), internalRoles...),
 		ElevatedRoles:     append([]ElevatedRole(nil), elevatedRoles...),
 		AllowedNamespaces: allowedNamespaces,
 	}
 
 	p.setCachedPermission(cacheKey, permission)
 	return clonePermission(permission), nil
+}
+
+func normalizeGroups(groups []string) []string {
+	if len(groups) == 0 {
+		return nil
+	}
+
+	resolved := make([]string, 0, len(groups))
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		trimmedGroup := strings.TrimSpace(group)
+		if trimmedGroup == "" {
+			continue
+		}
+		if _, ok := seen[trimmedGroup]; !ok {
+			seen[trimmedGroup] = struct{}{}
+			resolved = append(resolved, trimmedGroup)
+		}
+
+	}
+
+	return resolved
+}
+
+func (p *PolicyEvaluator) resolveInternalRoles(groups []string) []string {
+	if len(groups) == 0 {
+		return nil
+	}
+
+	resolved := make([]string, 0, len(groups))
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		for _, mappedRole := range p.roleMappings[group] {
+			trimmedRole := strings.TrimSpace(mappedRole)
+			if trimmedRole == "" {
+				continue
+			}
+			if _, ok := seen[trimmedRole]; ok {
+				continue
+			}
+			seen[trimmedRole] = struct{}{}
+			resolved = append(resolved, trimmedRole)
+		}
+	}
+
+	return resolved
+}
+
+func cloneStringSlicesMap(source map[string][]string) map[string][]string {
+	if len(source) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string][]string, len(source))
+	for key, values := range source {
+		cloned[key] = append([]string(nil), values...)
+	}
+	return cloned
 }
 
 func (p *PolicyEvaluator) CanAccessNamespace(ctx context.Context, userInfo *auth.UserInfo, namespace string) (bool, error) {
@@ -201,6 +276,17 @@ func (p *PolicyEvaluator) setCachedPermission(userID string, permission *Permiss
 	p.cacheMu.Unlock()
 }
 
+func (p *PolicyEvaluator) InvalidateUserID(userID string) {
+	trimmedUserID := strings.TrimSpace(userID)
+	if trimmedUserID == "" {
+		return
+	}
+
+	p.cacheMu.Lock()
+	delete(p.cache, trimmedUserID)
+	p.cacheMu.Unlock()
+}
+
 func clonePermission(permission *Permission) *Permission {
 	if permission == nil {
 		return nil
@@ -208,7 +294,8 @@ func clonePermission(permission *Permission) *Permission {
 
 	return &Permission{
 		UserID:            permission.UserID,
-		Groups:            append([]string(nil), permission.Groups...),
+		ExternalGroups:    append([]string(nil), permission.ExternalGroups...),
+		InternalRoles:     append([]string(nil), permission.InternalRoles...),
 		ElevatedRoles:     append([]ElevatedRole(nil), permission.ElevatedRoles...),
 		AllowedNamespaces: append([]string(nil), permission.AllowedNamespaces...),
 	}

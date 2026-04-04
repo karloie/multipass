@@ -13,6 +13,7 @@ import (
 	"github.com/karloie/multipass/internal/auth"
 	"github.com/karloie/multipass/internal/authz"
 	"github.com/karloie/multipass/internal/config"
+	"github.com/karloie/multipass/internal/pim"
 	"github.com/karloie/multipass/internal/proxy"
 	"github.com/karloie/multipass/internal/status"
 )
@@ -97,7 +98,13 @@ func main() {
 		LogoutPath:   cfg.Auth.OIDC.Paths().LogoutPath,
 	})
 
-	evaluator, err := initializeAuthzProvider(cfg, sessionTTL)
+	var pimStore *pim.MemoryStore
+	if cfg.PIM.Enabled {
+		pimStore = pim.NewMemoryStore()
+		slog.Info("privileged access requests enabled", slog.Int("roles", len(cfg.PIM.Roles)))
+	}
+
+	evaluator, err := initializeAuthzProvider(cfg, sessionTTL, pimStore)
 	if err != nil {
 		fatal("failed to initialize authz provider", err)
 	}
@@ -126,6 +133,14 @@ func main() {
 		slog.Info("enabled diagnostics endpoint", slog.String("path", "/status"))
 	}
 	browserAuth.RegisterRoutes(rootMux)
+	if cfg.PIM.Enabled {
+		pimHandler, err := pim.NewHandler(cfg.PIM, cfg.Server.TrustForwardedProto, browserAuth, pimStore, auditStore, evaluator)
+		if err != nil {
+			fatal("failed to initialize pim handler", err)
+		}
+		pimHandler.RegisterRoutes(rootMux)
+		slog.Info("enabled privileged access routes", slog.String("request_path", "/pim"), slog.String("approval_path", "/approve-pim"))
+	}
 	rootMux.Handle("/", handler)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
@@ -261,7 +276,7 @@ func initializeAuthProvider(cfg *config.Config) (auth.Provider, error) {
 	}
 }
 
-func initializeAuthzProvider(cfg *config.Config, sessionTTL time.Duration) (*authz.PolicyEvaluator, error) {
+func initializeAuthzProvider(cfg *config.Config, sessionTTL time.Duration, pimRoleProvider authz.ElevatedRoleProvider) (*authz.PolicyEvaluator, error) {
 	if !cfg.Authz.Enabled {
 		slog.Info("authorization disabled")
 		return nil, nil
@@ -274,7 +289,7 @@ func initializeAuthzProvider(cfg *config.Config, sessionTTL time.Duration) (*aut
 	case providerToken:
 		tokenProvider := authz.NewTokenProvider()
 		groupProvider = tokenProvider
-		roleProvider = tokenProvider
+		roleProvider = authz.NewCompositeRoleProvider(tokenProvider, pimRoleProvider)
 		if cfg.Auth.TrustedProxy.Enabled {
 			groupProvider = authz.NewCachedGroupProvider(groupProvider, authz.NewMemoryGroupCache(sessionTTL))
 		}
@@ -283,7 +298,7 @@ func initializeAuthzProvider(cfg *config.Config, sessionTTL time.Duration) (*aut
 		return nil, fmt.Errorf("unknown authz provider '%s' (supported: token)", cfg.Authz.Provider)
 	}
 
-	evaluator := authz.NewPolicyEvaluator(groupProvider, roleProvider, cfg.Authz.GroupMappings)
+	evaluator := authz.NewPolicyEvaluatorWithRoleMappings(groupProvider, roleProvider, cfg.Authz.GroupMappings, cfg.Authz.RoleMappings)
 	slog.Info("authorization enabled", slog.String("provider", cfg.Authz.Provider))
 	return evaluator, nil
 }

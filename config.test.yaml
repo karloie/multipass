@@ -24,16 +24,28 @@ auth:
 authz:
   enabled: true
   provider: token
-  groupMappings:
-    dev-team-1:
+
+  roleMappings:
+    Rolle Plattformadmin:
+      - admin
+    Rolle Drift:
+      - devops
+    Rolle Utvikler:
       - dev
-      - test
-    dev-team-2:
-      - staging
+    Rolle Gjest:
+      - man
+
+  groupMappings:
     admin:
       - "*"  # Access all namespaces
-    operator:
+    devops:
       - prod
+      - ops
+    dev:
+      - dev
+      - test
+    man:
+      - staging
 
 # Audit logging (in-memory for testing)
 audit:

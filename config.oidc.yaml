@@ -28,22 +28,53 @@ auth:
 authz:
   enabled: true
   provider: token
-  groupMappings:
-    Team Applikasjonsplattform:
-      - default
-      - monitoring
-    Kubernetes Les - Test:
-      - default
-      - monitoring
+
+  roleMappings:
+    PlatformTeam:
+      - dev
+    ReadOnlyTestGroup:
+      - man
     Reader:
-      - default
-      - monitoring
+      - man
     Contributor:
-      - default
-      - monitoring
+      - dev
     Owner:
+      - admin
+
+  groupMappings:
+    admin:
       - default
       - monitoring
+      - "*"
+    devops:
+      - monitoring
+    dev:
+      - default
+      - monitoring
+    man:
+      - default
+      - monitoring
+
+pim:
+  enabled: true
+  defaultDuration: 30m
+  roles:
+    admin:
+      approverGroups:
+        - ManagerGroup
+      maxDuration: 1h
+    devops:
+      approverGroups:
+        - ManagerGroup
+      maxDuration: 2h
+    dev:
+      approverGroups:
+        - ManagerGroup
+      maxDuration: 4h
+    man:
+      approverGroups:
+        - ManagerGroup
+      maxDuration: 8h
 
 audit:
   enabled: false

@@ -45,6 +45,19 @@ authz:
   enabled: false  # Set to true to enforce namespace access control
   provider: token
 
+  # Optional: map real JWT groups/roles onto Multipass internal roles.
+  # This lets Multipass stay consistent internally with role names like
+  # admin, devops, dev, and man even when the IdP emits different values.
+  # roleMappings:
+  #   PlatformDevAdminGroup:
+  #     - admin
+  #   PlatformBaseGroup:
+  #     - devops
+  #   DeveloperGroup:
+  #     - dev
+  #   ReadOnlyGroup:
+  #     - man
+
   # Token authz provider: uses the validated token's groups claim directly.
   # This is the simplest option when your IdP already emits the exact groups
   # Multipass should authorize against.
@@ -53,51 +66,29 @@ authz:
   # With a normal OIDC setup, `token` is enough: validated
   # token groups become the source of namespace authorization.
 
-  # Group -> Namespace mappings
+  # Internal role/group -> Namespace mappings
   groupMappings:
-    team-platform:
-      - dev
-      - test
-      - prod
-    Kubernetes Admin - Test:
-      - default
-      - monitoring
-    Kubernetes Les - Test:
-      - default
-      - monitoring
-    Team Applikasjonsplattform:
-      - default
-      - monitoring
-    Contributor:
-      - default
-      - monitoring
-    Owner:
-      - default
-      - monitoring
-    Reader:
-      - default
-      - monitoring
-    team-product:
-      - product-dev
-      - product-prod
-    admins:
+    admin:
       - "*"  # Access all namespaces
-    developers:
+    devops:
+      - prod
+      - ops
+    dev:
       - dev
       - test
-    operators:
-      - prod
+    man:
+      - default
 
   # Example rollout for namespace-scoped observability access.
   # Use fixed backend aliases together with matching namespace grants so
   # Grafana datasources can point at Multipass and Multipass becomes the
   # authoritative gate for reads.
   # groupMappings:
-  #   Team UTV:
+  #   ProductTeam:
   #     - utv
-  #   Team Monitoring:
+  #   MonitoringTeam:
   #     - monitoring
-  #   Team Applikasjonsplattform:
+  #   PlatformTeam:
   #     - applikasjonsplattform
   #   Reader:
   #     - monitoring
@@ -124,6 +115,28 @@ authz:
   #   mappings:
   #     otel-collector-core: core
   #     otel-collector-core-test: core-test
+
+# Optional: simple privilege escalation requests for temporary role grants.
+# Each role here must also exist in authz.groupMappings. Approvers are matched
+# against the authenticated user's id, email, username, or principal id.
+# Example: an approved request for role `admin` activates the `admin` role
+# temporarily, and authz.groupMappings[admin] determines what it can access.
+# pim:
+#   enabled: true
+#   defaultDuration: 30m
+#   roles:
+#     admin:
+#       approverGroups:
+#         - ManagerGroup
+#       maxDuration: 1h
+#     devops:
+#       approverGroups:
+#         - ManagerGroup
+#       maxDuration: 2h
+#     dev:
+#       approverGroups:
+#         - ManagerGroup
+#       maxDuration: 4h
 
 # === Audit Logging ===
 # Log all access attempts for compliance and security analysis

@@ -32,7 +32,8 @@ type Evaluator interface {
 
 type Permission struct {
 	UserID            string
-	Groups            []string
+	ExternalGroups    []string
+	InternalRoles     []string
 	ElevatedRoles     []ElevatedRole
 	AllowedNamespaces []string
 }

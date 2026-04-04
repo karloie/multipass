@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/karloie/multipass/internal/auth"
 	queryrewrite "github.com/karloie/multipass/internal/query"
@@ -23,6 +24,7 @@ type Config struct {
 	Server   ServerConfig             `yaml:"server"`
 	Auth     AuthConfig               `yaml:"auth"`
 	Authz    AuthzConfig              `yaml:"authz"`
+	PIM      PIMConfig                `yaml:"pim,omitempty"`
 	Audit    AuditConfig              `yaml:"audit"`
 	Backends map[string]BackendConfig `yaml:"backends"`
 }
@@ -129,9 +131,24 @@ type AuthzConfig struct {
 	Enabled             bool                      `yaml:"enabled"`       // Enable authorization
 	Provider            string                    `yaml:"provider"`      // "token"
 	GroupMappings       map[string][]string       `yaml:"groupMappings"` // group -> namespaces
+	RoleMappings        map[string][]string       `yaml:"roleMappings,omitempty"`
 	LocalCluster        string                    `yaml:"localCluster,omitempty"`
 	ClusterResolver     ClusterResolverConfig     `yaml:"clusterResolver,omitempty"`
 	NamespaceClassifier NamespaceClassifierConfig `yaml:"namespaceClassifier,omitempty"`
+}
+
+// PIMConfig defines temporary elevated role request settings.
+type PIMConfig struct {
+	Enabled         bool                     `yaml:"enabled,omitempty"`
+	DefaultDuration string                   `yaml:"defaultDuration,omitempty"`
+	Roles           map[string]PIMRoleConfig `yaml:"roles,omitempty"`
+}
+
+// PIMRoleConfig defines one requestable temporary role.
+type PIMRoleConfig struct {
+	Approver       string   `yaml:"approver,omitempty"`
+	ApproverGroups []string `yaml:"approverGroups,omitempty"`
+	MaxDuration    string   `yaml:"maxDuration,omitempty"`
 }
 
 // ClusterResolverConfig maps authenticated callers to cluster names.
@@ -195,9 +212,9 @@ type WebConfig struct {
 	UserHeader   string            `yaml:"userHeader"`             // Header for user ID (e.g., X-WEBAUTH-USER)
 	EmailHeader  string            `yaml:"emailHeader"`            // Header for user email (e.g., X-WEBAUTH-EMAIL)
 	NameHeader   string            `yaml:"nameHeader"`             // Header for user name (e.g., X-WEBAUTH-NAME)
-	GroupsHeader string            `yaml:"groupsHeader"`           // Header for user groups (e.g., X-WEBAUTH-GROUP)
+	GroupsHeader string            `yaml:"groupsHeader"`           // Header for original external groups from the JWT
 	RoleHeader   string            `yaml:"roleHeader,omitempty"`   // Header for backend-native role (e.g., X-WEBAUTH-ROLE)
-	RoleMappings map[string]string `yaml:"roleMappings,omitempty"` // Group -> backend-native role
+	RoleMappings map[string]string `yaml:"roleMappings,omitempty"` // Internal role -> backend-native role
 }
 
 func (c ClusterResolverConfig) HasMappings() bool {
@@ -344,6 +361,9 @@ func (c *Config) Validate() error {
 	if err := c.validateAuthz(); err != nil {
 		return err
 	}
+	if err := c.validatePIM(); err != nil {
+		return err
+	}
 	if err := c.validateAudit(); err != nil {
 		return err
 	}
@@ -458,6 +478,83 @@ func (c *Config) validateAuthz() error {
 
 	if err := c.validateClusterResolver(); err != nil {
 		return err
+	}
+	if err := c.validateRoleMappings(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Config) validateRoleMappings() error {
+	if len(c.Authz.RoleMappings) == 0 {
+		return nil
+	}
+
+	for externalRole, internalRoles := range c.Authz.RoleMappings {
+		trimmedExternalRole := strings.TrimSpace(externalRole)
+		if trimmedExternalRole == "" {
+			return fmt.Errorf("authz roleMappings cannot contain empty external role names")
+		}
+		if len(internalRoles) == 0 {
+			return fmt.Errorf("authz roleMappings for '%s' must contain at least one internal role", trimmedExternalRole)
+		}
+		for _, internalRole := range internalRoles {
+			trimmedInternalRole := strings.TrimSpace(internalRole)
+			if trimmedInternalRole == "" {
+				return fmt.Errorf("authz roleMappings for '%s' cannot contain empty internal roles", trimmedExternalRole)
+			}
+			if _, ok := c.Authz.GroupMappings[trimmedInternalRole]; !ok {
+				return fmt.Errorf("authz roleMappings for '%s' references unknown internal role '%s'", trimmedExternalRole, trimmedInternalRole)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *Config) validatePIM() error {
+	if !c.PIM.Enabled {
+		return nil
+	}
+
+	if !c.Authz.Enabled {
+		return fmt.Errorf("pim requires authz to be enabled")
+	}
+
+	if len(c.PIM.Roles) == 0 {
+		return fmt.Errorf("pim roles are required when pim is enabled")
+	}
+
+	if strings.TrimSpace(c.PIM.DefaultDuration) != "" {
+		duration, err := time.ParseDuration(strings.TrimSpace(c.PIM.DefaultDuration))
+		if err != nil || duration <= 0 {
+			return fmt.Errorf("pim defaultDuration must be a positive duration")
+		}
+	}
+
+	for role, roleConfig := range c.PIM.Roles {
+		trimmedRole := strings.TrimSpace(role)
+		if trimmedRole == "" {
+			return fmt.Errorf("pim roles cannot contain empty names")
+		}
+		if strings.TrimSpace(roleConfig.Approver) == "" && len(roleConfig.ApproverGroups) == 0 {
+			return fmt.Errorf("pim role '%s' requires approver or approverGroups", trimmedRole)
+		}
+		for _, approverGroup := range roleConfig.ApproverGroups {
+			if strings.TrimSpace(approverGroup) == "" {
+				return fmt.Errorf("pim role '%s' approverGroups cannot contain empty values", trimmedRole)
+			}
+		}
+		if strings.TrimSpace(roleConfig.MaxDuration) != "" {
+			duration, err := time.ParseDuration(strings.TrimSpace(roleConfig.MaxDuration))
+			if err != nil || duration <= 0 {
+				return fmt.Errorf("pim role '%s' maxDuration must be a positive duration", trimmedRole)
+			}
+		}
+		if _, ok := c.Authz.GroupMappings[trimmedRole]; !ok {
+			return fmt.Errorf("pim role '%s' must exist in authz groupMappings", trimmedRole)
+		}
 	}
 
 	return nil
