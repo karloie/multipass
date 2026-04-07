@@ -142,8 +142,15 @@ func (s *MemoryStore) DecideRequest(ctx context.Context, id string, approver *au
 
 func (s *MemoryStore) GetActiveElevatedRoles(ctx context.Context, userInfo *auth.UserInfo) ([]authz.ElevatedRole, error) {
 	_ = ctx
+	if s == nil {
+		return nil, nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if s.requests == nil {
+		return nil, nil
+	}
 
 	now := s.now()
 	activeByRole := make(map[string]time.Time)

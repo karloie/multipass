@@ -77,3 +77,15 @@ func TestMemoryStoreActivatesApprovedRole(t *testing.T) {
 		t.Fatalf("unexpected expiry: %v", roles[0].ExpiresAt)
 	}
 }
+
+func TestMemoryStoreNilReceiverReturnsNoRoles(t *testing.T) {
+	var store *MemoryStore
+
+	roles, err := store.GetActiveElevatedRoles(context.Background(), &auth.UserInfo{ID: "user-1"})
+	if err != nil {
+		t.Fatalf("GetActiveElevatedRoles returned error: %v", err)
+	}
+	if len(roles) != 0 {
+		t.Fatalf("expected no roles, got %+v", roles)
+	}
+}
