@@ -115,11 +115,41 @@ func resolveWebGroups(req *http.Request, userInfo *auth.UserInfo) []string {
 }
 
 func resolveWebRoleInputs(req *http.Request, userInfo *auth.UserInfo) []string {
+	groups := resolveWebGroups(req, userInfo)
+
 	perms, ok := req.Context().Value(permissionsKey).(*authz.Permission)
-	if ok && perms != nil && len(perms.InternalRoles) > 0 {
-		return perms.InternalRoles
+	if !ok || perms == nil || len(perms.InternalRoles) == 0 {
+		return groups
 	}
-	return resolveWebGroups(req, userInfo)
+
+	inputs := make([]string, 0, len(perms.InternalRoles)+len(groups))
+	seen := make(map[string]struct{}, len(perms.InternalRoles)+len(groups))
+
+	for _, role := range perms.InternalRoles {
+		trimmed := strings.TrimSpace(role)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		inputs = append(inputs, trimmed)
+	}
+
+	for _, group := range groups {
+		trimmed := strings.TrimSpace(group)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		inputs = append(inputs, trimmed)
+	}
+
+	return inputs
 }
 
 func resolveMappedRole(groups []string, roleMappings map[string]string) string {

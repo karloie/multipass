@@ -3,11 +3,31 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/karloie/multipass/internal/auth"
+	"github.com/karloie/multipass/internal/authz"
 	"github.com/karloie/multipass/internal/config"
 )
+
+func TestResolveWebRoleInputsIncludesExternalGroupsWhenInternalRolesPresent(t *testing.T) {
+	user := &auth.UserInfo{Groups: []string{"App-Grafana-Editors", "Rolle Utvikler"}}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), permissionsKey, &authz.Permission{
+		InternalRoles:  []string{"dev", "devops"},
+		ExternalGroups: []string{"App-Grafana-Editors", "Rolle Utvikler"},
+	}))
+
+	inputs := resolveWebRoleInputs(req, user)
+	role := resolveMappedRole(inputs, map[string]string{
+		"App-Grafana-Editors": "Editor",
+	})
+
+	if role != "Editor" {
+		t.Fatalf("expected Editor role from external App-Grafana-* group, got %q (inputs=%v)", role, inputs)
+	}
+}
 
 func TestWebBackends(t *testing.T) {
 	tests := []proxyTestCase{
