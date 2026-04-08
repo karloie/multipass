@@ -53,6 +53,8 @@ const (
 	namespaceRoutingSourceBoth  = "both"
 
 	defaultNamespace    = "default"
+	defaultTeamParam    = "tm_team_id"
+	defaultTeamHeader   = "X-Multipass-Team-ID"
 	auditWriteTimeout   = 2 * time.Second
 	backendProbeTimeout = 2 * time.Second
 
@@ -78,6 +80,7 @@ type Proxy struct {
 	authProvider auth.Provider
 	browserAuth  browserAuthenticator
 	authz        authz.Evaluator
+	teamPolicy   *authz.TeamPolicyEvaluator
 	auditStore   audit.Store
 }
 
@@ -110,6 +113,29 @@ func New(cfg *config.Config, authProvider auth.Provider, browserAuth browserAuth
 		browserAuth:  browserAuth,
 		authz:        evaluator,
 		auditStore:   auditStore,
+	}
+
+	if cfg != nil && cfg.Authz.TeamAccess.Enabled {
+		teamAccess := cfg.Authz.TeamAccess
+		adminRoles := teamAccess.AdminRoles
+		if len(adminRoles) == 0 {
+			adminRoles = []string{"admin"}
+		}
+		devopsRoles := teamAccess.DevopsRoles
+		if len(devopsRoles) == 0 {
+			devopsRoles = []string{"devops"}
+		}
+		developerRoles := teamAccess.DeveloperRoles
+		if len(developerRoles) == 0 {
+			developerRoles = []string{"developer"}
+		}
+
+		p.teamPolicy = authz.NewTeamPolicyEvaluator(teamAccess.GroupToTeamID, authz.TeamPolicyConfig{
+			AdminRoles:     adminRoles,
+			DevopsRoles:    devopsRoles,
+			DeveloperRoles: developerRoles,
+			MappingVersion: teamAccess.MappingVersion,
+		})
 	}
 
 	for name, backend := range cfg.Backends {
@@ -414,6 +440,26 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), permissionsKey, perms))
+
+		if p.teamPolicy != nil {
+			teamDecision := p.teamPolicy.EvaluatePermission(perms)
+			requestTeamID := resolveRequestTeamID(r, p.config.Authz.TeamAccess)
+			if requestTeamID != "" {
+				if !p.teamPolicy.CanAccessTeam(teamDecision, requestTeamID) {
+					slog.WarnContext(r.Context(), "team access denied",
+						slog.String("user", userInfo.ID),
+						slog.String("team_id", requestTeamID),
+						slog.String("reason", teamDecision.Reason),
+					)
+					p.logAudit(r.Context(), userInfo, resolved.name, namespace, start, http.StatusForbidden, "access denied to team", perms)
+					http.Error(w, fmt.Sprintf("Access denied: no permission for team '%s'", requestTeamID), http.StatusForbidden)
+					return
+				}
+
+				r = r.Clone(r.Context())
+				r.Header.Set(defaultTeamHeader, requestTeamID)
+			}
+		}
 	}
 
 	r = r.WithContext(context.WithValue(r.Context(), namespaceKey, namespace))
@@ -447,6 +493,30 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 		perms, _ := r.Context().Value(permissionsKey).(*authz.Permission)
 		p.logAudit(r.Context(), userInfo, resolved.name, namespace, start, recorder.statusCode, "", perms)
 	}
+}
+
+func resolveRequestTeamID(r *http.Request, cfg config.TeamAccessConfig) string {
+	if r == nil {
+		return ""
+	}
+
+	queryParam := strings.TrimSpace(cfg.RequestParam)
+	if queryParam == "" {
+		queryParam = defaultTeamParam
+	}
+	if teamID := strings.TrimSpace(r.URL.Query().Get(queryParam)); teamID != "" {
+		return strings.ToLower(teamID)
+	}
+
+	headerName := strings.TrimSpace(cfg.RequestHeader)
+	if headerName == "" {
+		headerName = defaultTeamHeader
+	}
+	if teamID := strings.TrimSpace(r.Header.Get(headerName)); teamID != "" {
+		return strings.ToLower(teamID)
+	}
+
+	return ""
 }
 func rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace string) (*http.Request, error) {
 	if r == nil || !queryrewrite.HasRules(resolved.config.QueryRewrite) {

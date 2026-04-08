@@ -132,9 +132,22 @@ type AuthzConfig struct {
 	Provider            string                    `yaml:"provider"`      // "token"
 	GroupMappings       map[string][]string       `yaml:"groupMappings"` // group -> namespaces
 	RoleMappings        map[string][]string       `yaml:"roleMappings,omitempty"`
+	TeamAccess          TeamAccessConfig          `yaml:"teamAccess,omitempty"`
 	LocalCluster        string                    `yaml:"localCluster,omitempty"`
 	ClusterResolver     ClusterResolverConfig     `yaml:"clusterResolver,omitempty"`
 	NamespaceClassifier NamespaceClassifierConfig `yaml:"namespaceClassifier,omitempty"`
+}
+
+// TeamAccessConfig defines optional team-based request authorization.
+type TeamAccessConfig struct {
+	Enabled        bool              `yaml:"enabled,omitempty"`
+	RequestParam   string            `yaml:"requestParam,omitempty"`
+	RequestHeader  string            `yaml:"requestHeader,omitempty"`
+	GroupToTeamID  map[string]string `yaml:"groupToTeamId,omitempty"`
+	AdminRoles     []string          `yaml:"adminRoles,omitempty"`
+	DevopsRoles    []string          `yaml:"devopsRoles,omitempty"`
+	DeveloperRoles []string          `yaml:"developerRoles,omitempty"`
+	MappingVersion string            `yaml:"mappingVersion,omitempty"`
 }
 
 // PIMConfig defines temporary elevated role request settings.

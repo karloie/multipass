@@ -170,6 +170,8 @@ type proxyTestCase struct {
 	authValidateFunc         func(ctx context.Context, token string) (*auth.UserInfo, error)
 	authzGetUserGroupsFunc   func(ctx context.Context, userID string) ([]string, error)
 	authzGroupMappings       map[string][]string
+	authzRoleMappings        map[string][]string
+	authzTeamAccess          *config.TeamAccessConfig
 	authzEnabled             bool
 	webConfig                *config.WebConfig
 	expectedStatus           int
@@ -317,6 +319,15 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 	if tt.authzClusterResolver != nil {
 		cfg.Authz.ClusterResolver = *tt.authzClusterResolver
 	}
+	if tt.authzRoleMappings != nil {
+		cfg.Authz.RoleMappings = tt.authzRoleMappings
+	}
+	if tt.authzGroupMappings != nil {
+		cfg.Authz.GroupMappings = tt.authzGroupMappings
+	}
+	if tt.authzTeamAccess != nil {
+		cfg.Authz.TeamAccess = *tt.authzTeamAccess
+	}
 
 	if tt.backendName != "nonexistent" {
 		cfg.Backends[tt.backendName] = config.BackendConfig{
@@ -367,7 +378,7 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 				return []string{"default-group"}, nil
 			},
 		}
-		authzEvaluator = authz.NewPolicyEvaluator(authzProvider, authzProvider, groupMappings)
+		authzEvaluator = authz.NewPolicyEvaluatorWithRoleMappings(authzProvider, authzProvider, groupMappings, tt.authzRoleMappings)
 	}
 
 	auditStore := audit.NewMemoryStore()
@@ -712,6 +723,95 @@ func TestExternalHostCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
 		expectBackendCall:       true,
 		expectedBackendPath:     "/otlp/v1/metrics",
 		expectedAuditNamespace:  "core-test",
+	})
+}
+
+func TestTeamAccessDeveloperNeedsMatchingTeamID(t *testing.T) {
+	baseRoleMappings := map[string][]string{
+		"Rolle Utvikler":                       {"developer"},
+		"Rolle Plattformutvikler basistilgang": {"devops"},
+		"Rolle Plattformadmin produksjon":      {"admin"},
+	}
+	baseGroupMappings := map[string][]string{
+		"Rolle Utvikler": {"core"},
+		"developer":      {"core"},
+		"devops":         {"core"},
+		"admin":          {"core"},
+	}
+	teamAccess := &config.TeamAccessConfig{
+		Enabled: true,
+		GroupToTeamID: map[string]string{
+			"Team Appark": "appark",
+		},
+		AdminRoles:     []string{"admin"},
+		DevopsRoles:    []string{"devops"},
+		DeveloperRoles: []string{"developer"},
+	}
+
+	t.Run("developer allowed when request team matches", func(t *testing.T) {
+		executeProxyTestCase(t, proxyTestCase{
+			name:            "developer with matching team",
+			backendName:     "loki-core",
+			backendType:     "prometheus",
+			backendNamespace: "core",
+			requestPath:     "/loki-core/ready?tm_team_id=appark",
+			authzEnabled:    true,
+			authzRoleMappings: baseRoleMappings,
+			authzGroupMappings: baseGroupMappings,
+			authzTeamAccess: teamAccess,
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"Rolle Utvikler", "Team Appark"}, nil
+			},
+			expectedStatus:    http.StatusOK,
+			expectAuthCall:    true,
+			expectAuthzCall:   true,
+			expectAuditEvent:  true,
+			expectBackendCall: true,
+		})
+	})
+
+	t.Run("developer denied when request team does not match", func(t *testing.T) {
+		executeProxyTestCase(t, proxyTestCase{
+			name:            "developer with mismatched team",
+			backendName:     "loki-core",
+			backendType:     "prometheus",
+			backendNamespace: "core",
+			requestPath:     "/loki-core/ready?tm_team_id=premie",
+			authzEnabled:    true,
+			authzRoleMappings: baseRoleMappings,
+			authzGroupMappings: baseGroupMappings,
+			authzTeamAccess: teamAccess,
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"Rolle Utvikler", "Team Appark"}, nil
+			},
+			expectedStatus:    http.StatusForbidden,
+			expectAuthCall:    true,
+			expectAuthzCall:   true,
+			expectAuditEvent:  true,
+			expectBackendCall: false,
+		})
+	})
+
+	t.Run("devops override ignores mismatched team", func(t *testing.T) {
+		executeProxyTestCase(t, proxyTestCase{
+			name:            "devops override",
+			backendName:     "loki-core",
+			backendType:     "prometheus",
+			backendNamespace: "core",
+			requestPath:     "/loki-core/ready?tm_team_id=premie",
+			authzEnabled:    true,
+			authzRoleMappings: baseRoleMappings,
+			authzGroupMappings: baseGroupMappings,
+			authzTeamAccess: teamAccess,
+			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
+				return []string{"Rolle Plattformutvikler basistilgang"}, nil
+			},
+			expectedStatus:    http.StatusOK,
+			expectAuthCall:    true,
+			expectAuthzCall:   true,
+			expectAuditEvent:  true,
+			expectBackendCall: true,
+		})
 	})
 }
 
