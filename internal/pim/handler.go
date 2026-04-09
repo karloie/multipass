@@ -21,7 +21,7 @@ import (
 const (
 	defaultRequestDuration = 30 * time.Minute
 	requestPath            = "/pim"
-	approvalPath           = "/approve-pim"
+	approvalPath           = "/pim/approve"
 )
 
 type browserAuthenticator interface {
@@ -340,7 +340,7 @@ func (h *Handler) renderRequestPage(w http.ResponseWriter, r *http.Request, user
 	}
 
 	data := requestPageData{
-		Title:           "Privilege Escalation Requests",
+		Title:           "Privilege Level Requests",
 		UserLabel:       requestUserLabel(userInfo),
 		Error:           errMsg,
 		Success:         successMsg,
@@ -368,7 +368,7 @@ func (h *Handler) renderApprovalPage(w http.ResponseWriter, r *http.Request, use
 	}
 
 	data := approvalPageData{
-		Title:        "Approve Privilege Escalation",
+		Title:        "Approve Privilege Level Requests",
 		UserLabel:    requestUserLabel(userInfo),
 		Error:        errMsg,
 		Success:      successMsg,
@@ -559,7 +559,7 @@ const requestPageHTML = `<!doctype html>
       <div>
         <p>Signed in as {{.UserLabel}}</p>
         <h1>{{.Title}}</h1>
-        <p>Request time-limited access to configured Multipass roles.</p>
+		<p>Request a temporary role level change in Multipass.</p>
       </div>
       <nav class="nav">
         <a href="{{.RequestPath}}">Request access</a>
@@ -589,11 +589,11 @@ const requestPageHTML = `<!doctype html>
             Reason
             <textarea name="reason" placeholder="Why do you need temporary access?" required>{{.Reason}}</textarea>
           </label>
-          <button type="submit">Request membership</button>
+		  <button type="submit">Request level change</button>
         </form>
         <div>
           <h2>How it works</h2>
-          <p class="meta">Approved requests activate one temporary role. Multipass uses that role through the existing authorization layer, so namespace access still comes from configured group mappings.</p>
+		  <p class="meta">Approved requests set one temporary role level at a time. A new approved level change replaces any currently active PIM level for that user.</p>
         </div>
       </div>
     </section>

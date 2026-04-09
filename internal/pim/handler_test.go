@@ -114,7 +114,7 @@ func TestHandlerRequestAndApproveFlow(t *testing.T) {
 		t.Fatalf("expected one pending request, got %d", len(pending))
 	}
 
-	approveRequest := httptest.NewRequest(http.MethodPost, "/approve-pim/"+pending[0].ID+"/approve", nil)
+	approveRequest := httptest.NewRequest(http.MethodPost, "/pim/approve/"+pending[0].ID+"/approve", nil)
 	approveRequest.Header.Set("Origin", "http://example.com")
 	approveRequest.Host = "example.com"
 	approveRecorder := httptest.NewRecorder()
@@ -189,7 +189,7 @@ func TestHandlerRequestAndApproveFlowByApproverGroup(t *testing.T) {
 		t.Fatalf("unexpected approver groups: %+v", pending[0].AssignedApproverGroups)
 	}
 
-	approveRequest := httptest.NewRequest(http.MethodPost, "/approve-pim/"+pending[0].ID+"/approve", nil)
+	approveRequest := httptest.NewRequest(http.MethodPost, "/pim/approve/"+pending[0].ID+"/approve", nil)
 	approveRequest.Header.Set("Origin", "http://example.com")
 	approveRequest.Host = "example.com"
 	approveRecorder := httptest.NewRecorder()

@@ -128,6 +128,18 @@ func (s *MemoryStore) DecideRequest(ctx context.Context, id string, approver *au
 
 	now := s.now().UTC()
 	if approve {
+		// A newly approved request becomes the active PIM level for the user.
+		for _, existing := range s.requests {
+			if existing == req {
+				continue
+			}
+			if existing.RequesterCacheKey != req.RequesterCacheKey {
+				continue
+			}
+			if existing.IsActive(now) {
+				existing.ExpiresAt = now
+			}
+		}
 		req.Status = StatusApproved
 		req.ExpiresAt = now.Add(req.Duration)
 	} else {

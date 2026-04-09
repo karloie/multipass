@@ -89,3 +89,55 @@ func TestMemoryStoreNilReceiverReturnsNoRoles(t *testing.T) {
 		t.Fatalf("expected no roles, got %+v", roles)
 	}
 }
+
+func TestMemoryStoreApproveReplacesExistingActiveRole(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	requester := &auth.UserInfo{ID: "user-1", Email: "user-1@example.com"}
+	approver := &auth.UserInfo{Email: "approver@example.com"}
+
+	adminReq, err := store.CreateRequest(context.Background(), &Request{
+		RequesterID:       requestUserID(requester),
+		RequesterLabel:    requestUserLabel(requester),
+		RequesterCacheKey: requestCacheKey(requester),
+		RequestedRole:     "admin",
+		AssignedApprover:  "approver@example.com",
+		Reason:            "Need admin for incident",
+		Duration:          45 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest returned error: %v", err)
+	}
+
+	if _, err := store.DecideRequest(context.Background(), adminReq.ID, approver, true); err != nil {
+		t.Fatalf("DecideRequest returned error: %v", err)
+	}
+
+	now = now.Add(5 * time.Minute)
+	devReq, err := store.CreateRequest(context.Background(), &Request{
+		RequesterID:       requestUserID(requester),
+		RequesterLabel:    requestUserLabel(requester),
+		RequesterCacheKey: requestCacheKey(requester),
+		RequestedRole:     "dev",
+		AssignedApprover:  "approver@example.com",
+		Reason:            "PoC downgrade to dev",
+		Duration:          30 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest returned error: %v", err)
+	}
+
+	if _, err := store.DecideRequest(context.Background(), devReq.ID, approver, true); err != nil {
+		t.Fatalf("DecideRequest returned error: %v", err)
+	}
+
+	roles, err := store.GetActiveElevatedRoles(context.Background(), requester)
+	if err != nil {
+		t.Fatalf("GetActiveElevatedRoles returned error: %v", err)
+	}
+	if len(roles) != 1 || roles[0].Role != "dev" {
+		t.Fatalf("expected only dev to be active, got %+v", roles)
+	}
+}

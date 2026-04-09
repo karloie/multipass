@@ -38,11 +38,11 @@ type TeamAccessDecision struct {
 }
 
 type TeamPolicyEvaluator struct {
-	groupToTeamID   map[string]string
-	adminRoles      map[string]struct{}
-	devopsRoles     map[string]struct{}
-	developerRoles  map[string]struct{}
-	mappingVersion  string
+	groupToTeamID  map[string]string
+	adminRoles     map[string]struct{}
+	devopsRoles    map[string]struct{}
+	developerRoles map[string]struct{}
+	mappingVersion string
 }
 
 func NewTeamPolicyEvaluator(groupToTeamID map[string]string, cfg TeamPolicyConfig) *TeamPolicyEvaluator {

@@ -66,7 +66,7 @@ Based on the current AD group analysis, the intended mapping is:
 PIM adds temporary internal roles through a browser-only approval flow:
 
 - user requests a temporary role at `/pim`
-- approver approves or denies at `/approve-pim`
+- approver approves or denies at `/pim/approve`
 - approved requests become temporary `ElevatedRoles`
 - authz evaluates those elevated roles together with the normal roles
 

@@ -750,15 +750,15 @@ func TestTeamAccessDeveloperNeedsMatchingTeamID(t *testing.T) {
 
 	t.Run("developer allowed when request team matches", func(t *testing.T) {
 		executeProxyTestCase(t, proxyTestCase{
-			name:            "developer with matching team",
-			backendName:     "loki-core",
-			backendType:     "prometheus",
-			backendNamespace: "core",
-			requestPath:     "/loki-core/ready?tm_team_id=appark",
-			authzEnabled:    true,
-			authzRoleMappings: baseRoleMappings,
+			name:               "developer with matching team",
+			backendName:        "loki-core",
+			backendType:        "prometheus",
+			backendNamespace:   "core",
+			requestPath:        "/loki-core/ready?tm_team_id=appark",
+			authzEnabled:       true,
+			authzRoleMappings:  baseRoleMappings,
 			authzGroupMappings: baseGroupMappings,
-			authzTeamAccess: teamAccess,
+			authzTeamAccess:    teamAccess,
 			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
 				return []string{"Rolle Utvikler", "Team Appark"}, nil
 			},
@@ -772,15 +772,15 @@ func TestTeamAccessDeveloperNeedsMatchingTeamID(t *testing.T) {
 
 	t.Run("developer denied when request team does not match", func(t *testing.T) {
 		executeProxyTestCase(t, proxyTestCase{
-			name:            "developer with mismatched team",
-			backendName:     "loki-core",
-			backendType:     "prometheus",
-			backendNamespace: "core",
-			requestPath:     "/loki-core/ready?tm_team_id=premie",
-			authzEnabled:    true,
-			authzRoleMappings: baseRoleMappings,
+			name:               "developer with mismatched team",
+			backendName:        "loki-core",
+			backendType:        "prometheus",
+			backendNamespace:   "core",
+			requestPath:        "/loki-core/ready?tm_team_id=premie",
+			authzEnabled:       true,
+			authzRoleMappings:  baseRoleMappings,
 			authzGroupMappings: baseGroupMappings,
-			authzTeamAccess: teamAccess,
+			authzTeamAccess:    teamAccess,
 			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
 				return []string{"Rolle Utvikler", "Team Appark"}, nil
 			},
@@ -794,15 +794,15 @@ func TestTeamAccessDeveloperNeedsMatchingTeamID(t *testing.T) {
 
 	t.Run("devops override ignores mismatched team", func(t *testing.T) {
 		executeProxyTestCase(t, proxyTestCase{
-			name:            "devops override",
-			backendName:     "loki-core",
-			backendType:     "prometheus",
-			backendNamespace: "core",
-			requestPath:     "/loki-core/ready?tm_team_id=premie",
-			authzEnabled:    true,
-			authzRoleMappings: baseRoleMappings,
+			name:               "devops override",
+			backendName:        "loki-core",
+			backendType:        "prometheus",
+			backendNamespace:   "core",
+			requestPath:        "/loki-core/ready?tm_team_id=premie",
+			authzEnabled:       true,
+			authzRoleMappings:  baseRoleMappings,
 			authzGroupMappings: baseGroupMappings,
-			authzTeamAccess: teamAccess,
+			authzTeamAccess:    teamAccess,
 			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
 				return []string{"Rolle Plattformutvikler basistilgang"}, nil
 			},

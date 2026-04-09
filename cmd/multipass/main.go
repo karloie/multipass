@@ -139,7 +139,7 @@ func main() {
 			fatal("failed to initialize pim handler", err)
 		}
 		pimHandler.RegisterRoutes(rootMux)
-		slog.Info("enabled privileged access routes", slog.String("request_path", "/pim"), slog.String("approval_path", "/approve-pim"))
+		slog.Info("enabled privileged access routes", slog.String("request_path", "/pim"), slog.String("approval_path", "/pim/approve"))
 	}
 	rootMux.Handle("/", handler)
 

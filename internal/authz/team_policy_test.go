@@ -62,7 +62,7 @@ func TestTeamPolicyEvaluatorDevopsOverridesDeveloperScope(t *testing.T) {
 func TestTeamPolicyEvaluatorDeveloperGetsTeamScopedAccess(t *testing.T) {
 	evaluator := NewTeamPolicyEvaluator(
 		map[string]string{
-			"team appark":                 "appark",
+			"team appark":                "appark",
 			"team applikasjonsplattform": "applikasjonsplattform",
 		},
 		TeamPolicyConfig{
