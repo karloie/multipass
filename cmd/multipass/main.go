@@ -100,8 +100,8 @@ func main() {
 
 	var pimStore *pim.MemoryStore
 	if cfg.PIM.Enabled {
-		pimStore = pim.NewMemoryStore()
-		slog.Info("privileged access requests enabled", slog.Int("roles", len(cfg.PIM.Roles)))
+		pimStore = pim.NewMemoryStoreWithOptions(cfg.PIM.AllowSelfApproval)
+		slog.Info("privileged access requests enabled", slog.Int("roles", len(cfg.PIM.Roles)), slog.Bool("allow_self_approval", cfg.PIM.AllowSelfApproval))
 	}
 
 	evaluator, err := initializeAuthzProvider(cfg, sessionTTL, pimStore)

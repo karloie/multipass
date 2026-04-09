@@ -141,3 +141,64 @@ func TestMemoryStoreApproveReplacesExistingActiveRole(t *testing.T) {
 		t.Fatalf("expected only dev to be active, got %+v", roles)
 	}
 }
+
+func TestMemoryStoreSelfApprovalBlockedByDefault(t *testing.T) {
+	store := NewMemoryStore()
+	requester := &auth.UserInfo{ID: "user-1", Email: "user@example.com"}
+
+	// Try to create a request where the requester is also the approver
+	_, err := store.CreateRequest(context.Background(), &Request{
+		RequesterID:       requestUserID(requester),
+		RequesterLabel:    requestUserLabel(requester),
+		RequesterCacheKey: requestCacheKey(requester),
+		RequestedRole:     "admin",
+		AssignedApprover:  "user@example.com",
+		Reason:            "Self-approval test",
+		Duration:          30 * time.Minute,
+	})
+	if err != ErrSelfApproval {
+		t.Fatalf("expected ErrSelfApproval, got %v", err)
+	}
+}
+
+func TestMemoryStoreSelfApprovalAllowedWhenEnabled(t *testing.T) {
+	store := NewMemoryStoreWithOptions(true) // Enable self-approval
+	now := time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	requester := &auth.UserInfo{ID: "user-1", Email: "user@example.com"}
+
+	// Create a request where the requester is also the approver
+	req, err := store.CreateRequest(context.Background(), &Request{
+		RequesterID:       requestUserID(requester),
+		RequesterLabel:    requestUserLabel(requester),
+		RequesterCacheKey: requestCacheKey(requester),
+		RequestedRole:     "admin",
+		AssignedApprover:  "user@example.com",
+		Reason:            "Self-approval test",
+		Duration:          30 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest returned error: %v", err)
+	}
+
+	// Approve their own request
+	approved, err := store.DecideRequest(context.Background(), req.ID, requester, true)
+	if err != nil {
+		t.Fatalf("DecideRequest returned error: %v", err)
+	}
+
+	if approved.Status != StatusApproved {
+		t.Fatalf("expected approved status, got %v", approved.Status)
+	}
+
+	// Verify the role is active
+	roles, err := store.GetActiveElevatedRoles(context.Background(), requester)
+	if err != nil {
+		t.Fatalf("GetActiveElevatedRoles returned error: %v", err)
+	}
+	if len(roles) != 1 || roles[0].Role != "admin" {
+		t.Fatalf("unexpected active roles: %+v", roles)
+	}
+}
+

@@ -23,15 +23,21 @@ var (
 )
 
 type MemoryStore struct {
-	mu       sync.RWMutex
-	requests map[string]*Request
-	now      func() time.Time
+	mu               sync.RWMutex
+	requests         map[string]*Request
+	now              func() time.Time
+	allowSelfApproval bool
 }
 
 func NewMemoryStore() *MemoryStore {
+	return NewMemoryStoreWithOptions(false)
+}
+
+func NewMemoryStoreWithOptions(allowSelfApproval bool) *MemoryStore {
 	return &MemoryStore{
-		requests: make(map[string]*Request),
-		now:      time.Now,
+		requests:         make(map[string]*Request),
+		now:              time.Now,
+		allowSelfApproval: allowSelfApproval,
 	}
 }
 
@@ -61,7 +67,7 @@ func (s *MemoryStore) CreateRequest(ctx context.Context, req *Request) (*Request
 		}
 	}
 
-	if strings.EqualFold(strings.TrimSpace(created.AssignedApprover), strings.TrimSpace(created.RequesterID)) || strings.EqualFold(strings.TrimSpace(created.AssignedApprover), strings.TrimSpace(created.RequesterLabel)) || strings.EqualFold(strings.TrimSpace(created.AssignedApprover), strings.TrimSpace(created.RequesterCacheKey)) {
+	if !s.allowSelfApproval && (strings.EqualFold(strings.TrimSpace(created.AssignedApprover), strings.TrimSpace(created.RequesterID)) || strings.EqualFold(strings.TrimSpace(created.AssignedApprover), strings.TrimSpace(created.RequesterLabel)) || strings.EqualFold(strings.TrimSpace(created.AssignedApprover), strings.TrimSpace(created.RequesterCacheKey))) {
 		return nil, ErrSelfApproval
 	}
 	created.AssignedApproverGroups = normalizeApproverGroups(created.AssignedApproverGroups)
@@ -122,7 +128,7 @@ func (s *MemoryStore) DecideRequest(ctx context.Context, id string, approver *au
 	if !matchesIdentity(approver, req.AssignedApprover) && !matchesAnyGroup(approver, req.AssignedApproverGroups) {
 		return nil, ErrApproverMismatch
 	}
-	if matchesIdentity(approver, req.RequesterID) || matchesIdentity(approver, req.RequesterLabel) || strings.EqualFold(requestCacheKey(approver), req.RequesterCacheKey) {
+	if !s.allowSelfApproval && (matchesIdentity(approver, req.RequesterID) || matchesIdentity(approver, req.RequesterLabel) || strings.EqualFold(requestCacheKey(approver), req.RequesterCacheKey)) {
 		return nil, ErrSelfApproval
 	}
 
