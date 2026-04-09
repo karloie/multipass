@@ -80,7 +80,7 @@ func matchesIdentity(userInfo *auth.UserInfo, identifier string) bool {
 		return false
 	}
 
-	for _, candidate := range []string{userInfo.ID, userInfo.Email, userInfo.Username, userInfo.PrincipalID} {
+	for _, candidate := range []string{userInfo.Name, userInfo.ID, userInfo.Email, userInfo.Username, userInfo.PrincipalID} {
 		if strings.EqualFold(strings.TrimSpace(candidate), trimmedIdentifier) {
 			return true
 		}
