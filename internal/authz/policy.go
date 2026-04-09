@@ -69,19 +69,10 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 	// Build namespace access map
 	namespacesMap := make(map[string]bool)
 
-	// Always include external groups from OIDC
-	for _, group := range externalGroups {
-		if namespaces, ok := p.groupMappings[group]; ok {
-			for _, ns := range namespaces {
-				namespacesMap[ns] = true
-			}
-		}
-	}
-
-	// When PIM elevated roles are active, they REPLACE internal roles
-	// This allows privilege de-escalation (e.g., admin → dev for testing)
+	// When PIM elevated roles are active, they COMPLETELY replace all other permissions
+	// This allows full privilege control including de-escalation (e.g., admin → dev for testing)
 	if len(elevatedRoles) > 0 {
-		// Use ONLY elevated roles, skip internal roles
+		// Use ONLY elevated PIM roles, ignore external groups and internal roles
 		for _, elevatedRole := range elevatedRoles {
 			if namespaces, ok := p.groupMappings[elevatedRole.Role]; ok {
 				for _, ns := range namespaces {
@@ -90,7 +81,15 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 			}
 		}
 	} else {
-		// No elevated roles active, use normal internal roles
+		// No PIM active: use normal permissions from external groups + internal roles
+		for _, group := range externalGroups {
+			if namespaces, ok := p.groupMappings[group]; ok {
+				for _, ns := range namespaces {
+					namespacesMap[ns] = true
+				}
+			}
+		}
+
 		for _, group := range internalRoles {
 			if namespaces, ok := p.groupMappings[group]; ok {
 				for _, ns := range namespaces {

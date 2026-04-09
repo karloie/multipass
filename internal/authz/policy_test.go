@@ -56,8 +56,13 @@ func TestPolicyEvaluatorCachesPermissions(t *testing.T) {
 	if permission.ExternalGroups[0] != "team-platform" {
 		t.Fatalf("expected cached permission to be isolated from mutation, got %q", permission.ExternalGroups[0])
 	}
-	if len(permission.AllowedNamespaces) != 3 {
-		t.Fatalf("unexpected namespace count: got %d want 3", len(permission.AllowedNamespaces))
+	// When PIM elevated roles are active, they COMPLETELY replace other permissions
+	// So only the prod-admin role's namespace (prod) is granted, not team-platform's (dev, test)
+	if len(permission.AllowedNamespaces) != 1 {
+		t.Fatalf("unexpected namespace count: got %d want 1 (PIM overrides all)", len(permission.AllowedNamespaces))
+	}
+	if permission.AllowedNamespaces[0] != "prod" {
+		t.Fatalf("expected PIM role namespace 'prod', got %v", permission.AllowedNamespaces)
 	}
 }
 
