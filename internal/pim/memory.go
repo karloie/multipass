@@ -23,9 +23,9 @@ var (
 )
 
 type MemoryStore struct {
-	mu               sync.RWMutex
-	requests         map[string]*Request
-	now              func() time.Time
+	mu                sync.RWMutex
+	requests          map[string]*Request
+	now               func() time.Time
 	allowSelfApproval bool
 }
 
@@ -35,8 +35,8 @@ func NewMemoryStore() *MemoryStore {
 
 func NewMemoryStoreWithOptions(allowSelfApproval bool) *MemoryStore {
 	return &MemoryStore{
-		requests:         make(map[string]*Request),
-		now:              time.Now,
+		requests:          make(map[string]*Request),
+		now:               time.Now,
 		allowSelfApproval: allowSelfApproval,
 	}
 }

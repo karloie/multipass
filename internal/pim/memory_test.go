@@ -201,4 +201,3 @@ func TestMemoryStoreSelfApprovalAllowedWhenEnabled(t *testing.T) {
 		t.Fatalf("unexpected active roles: %+v", roles)
 	}
 }
-

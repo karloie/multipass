@@ -152,10 +152,10 @@ type TeamAccessConfig struct {
 
 // PIMConfig defines temporary elevated role request settings.
 type PIMConfig struct {
-	Enabled          bool                     `yaml:"enabled,omitempty"`
+	Enabled           bool                     `yaml:"enabled,omitempty"`
 	AllowSelfApproval bool                     `yaml:"allowSelfApproval,omitempty"`
-	DefaultDuration  string                   `yaml:"defaultDuration,omitempty"`
-	Roles            map[string]PIMRoleConfig `yaml:"roles,omitempty"`
+	DefaultDuration   string                   `yaml:"defaultDuration,omitempty"`
+	Roles             map[string]PIMRoleConfig `yaml:"roles,omitempty"`
 }
 
 // PIMRoleConfig defines one requestable temporary role.

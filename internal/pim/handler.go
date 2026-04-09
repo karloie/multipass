@@ -41,6 +41,7 @@ type Handler struct {
 	evaluator           authz.Evaluator
 	invalidator         cacheInvalidator
 	defaultDuration     time.Duration
+	allowSelfApproval   bool
 	roles               []roleDefinition
 	rolesByName         map[string]roleDefinition
 	requestTemplate     *template.Template
@@ -249,10 +250,18 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request, us
 		h.renderRequestPage(w, r, userInfo, "Reason is required.", "", roleName, minutes, reason)
 		return
 	}
-	if matchesIdentity(userInfo, role.Approver) || strings.EqualFold(requestCacheKey(userInfo), role.Approver) || matchesAnyGroup(userInfo, role.ApproverGroups) {
+	if !h.allowSelfApproval && (matchesIdentity(userInfo, role.Approver) || strings.EqualFold(requestCacheKey(userInfo), role.Approver) || matchesAnyGroup(userInfo, role.ApproverGroups)) {
 		w.WriteHeader(http.StatusBadRequest)
 		h.renderRequestPage(w, r, userInfo, ErrSelfApproval.Error(), "", roleName, minutes, reason)
 		return
+	}
+
+	// For self-approval mode, assign request to requester
+	assignedApprover := role.Approver
+	assignedApproverGroups := append([]string(nil), role.ApproverGroups...)
+	if h.allowSelfApproval {
+		assignedApprover = requestUserLabel(userInfo)
+		assignedApproverGroups = nil
 	}
 
 	req, err := h.store.CreateRequest(r.Context(), &Request{
@@ -260,8 +269,8 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request, us
 		RequesterLabel:         requestUserLabel(userInfo),
 		RequesterCacheKey:      requestCacheKey(userInfo),
 		RequestedRole:          role.Name,
-		AssignedApprover:       role.Approver,
-		AssignedApproverGroups: append([]string(nil), role.ApproverGroups...),
+		AssignedApprover:       assignedApprover,
+		AssignedApproverGroups: assignedApproverGroups,
 		Reason:                 reason,
 		Duration:               duration,
 	})
