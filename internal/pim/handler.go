@@ -166,6 +166,7 @@ func NewHandlerWithEvaluator(cfg config.PIMConfig, trustForwardedProto bool, bro
 		evaluator:           evaluator,
 		invalidator:         invalidator,
 		defaultDuration:     defaultDuration,
+		allowSelfApproval:   cfg.AllowSelfApproval,
 		roles:               roles,
 		rolesByName:         rolesByName,
 		requestTemplate:     requestTemplate,
