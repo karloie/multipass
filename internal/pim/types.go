@@ -18,6 +18,7 @@ type Request struct {
 	ID                     string
 	RequesterID            string
 	RequesterLabel         string
+	RequesterUsername      string
 	RequesterCacheKey      string
 	RequestedRole          string
 	AssignedApprover       string

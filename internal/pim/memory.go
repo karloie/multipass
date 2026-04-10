@@ -83,7 +83,7 @@ func (s *MemoryStore) ListRequestsForUser(ctx context.Context, userInfo *auth.Us
 
 	requests := make([]Request, 0)
 	for _, req := range s.requests {
-		if !matchesIdentity(userInfo, req.RequesterID) && !matchesIdentity(userInfo, req.RequesterLabel) && requestCacheKey(userInfo) != req.RequesterCacheKey {
+		if !matchesIdentity(userInfo, req.RequesterID) && !matchesIdentity(userInfo, req.RequesterLabel) && !matchesIdentity(userInfo, req.RequesterUsername) && requestCacheKey(userInfo) != req.RequesterCacheKey {
 			continue
 		}
 		requests = append(requests, *cloneRequest(req))
@@ -128,7 +128,7 @@ func (s *MemoryStore) DecideRequest(ctx context.Context, id string, approver *au
 	if !matchesIdentity(approver, req.AssignedApprover) && !matchesAnyGroup(approver, req.AssignedApproverGroups) {
 		return nil, ErrApproverMismatch
 	}
-	if !s.allowSelfApproval && (matchesIdentity(approver, req.RequesterID) || matchesIdentity(approver, req.RequesterLabel) || strings.EqualFold(requestCacheKey(approver), req.RequesterCacheKey)) {
+	if !s.allowSelfApproval && (matchesIdentity(approver, req.RequesterID) || matchesIdentity(approver, req.RequesterLabel) || matchesIdentity(approver, req.RequesterUsername) || strings.EqualFold(requestCacheKey(approver), req.RequesterCacheKey)) {
 		return nil, ErrSelfApproval
 	}
 
@@ -176,7 +176,7 @@ func (s *MemoryStore) GetActiveElevatedRoles(ctx context.Context, userInfo *auth
 		if !req.IsActive(now) {
 			continue
 		}
-		if !matchesIdentity(userInfo, req.RequesterID) && !matchesIdentity(userInfo, req.RequesterLabel) && requestCacheKey(userInfo) != req.RequesterCacheKey {
+		if !matchesIdentity(userInfo, req.RequesterID) && !matchesIdentity(userInfo, req.RequesterLabel) && !matchesIdentity(userInfo, req.RequesterUsername) && requestCacheKey(userInfo) != req.RequesterCacheKey {
 			continue
 		}
 		if existing, ok := activeByRole[req.RequestedRole]; !ok || req.ExpiresAt.After(existing) {

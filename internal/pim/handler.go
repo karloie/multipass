@@ -268,6 +268,7 @@ func (h *Handler) handleCreateRequest(w http.ResponseWriter, r *http.Request, us
 	req, err := h.store.CreateRequest(r.Context(), &Request{
 		RequesterID:            requestUserID(userInfo),
 		RequesterLabel:         requestUserLabel(userInfo),
+		RequesterUsername:      userInfo.Username,
 		RequesterCacheKey:      requestCacheKey(userInfo),
 		RequestedRole:          role.Name,
 		AssignedApprover:       assignedApprover,
