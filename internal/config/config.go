@@ -265,7 +265,6 @@ func (c NamespaceClassifierConfig) HasRules() bool {
 }
 
 func (c NamespaceClassifierConfig) Classify(cluster, namespace string) string {
-	normalizedCluster := strings.TrimSpace(cluster)
 	normalizedNamespace := normalizeNamespaceToken(namespace)
 	if normalizedNamespace == "" {
 		return strings.TrimSpace(namespace)
@@ -280,24 +279,49 @@ func (c NamespaceClassifierConfig) Classify(cluster, namespace string) string {
 	opsPrefixes := normalizeNamespaceList(c.OpsPrefixes)
 	opsSuffixes := normalizeNamespaceList(c.OpsSuffixes)
 
+	if matchesNamespaceClassifier(normalizedNamespace, opsExact, opsPrefixes, opsSuffixes) {
+		return "ops"
+	}
+	return defaultSegment
+}
+
+// OpsNamespaceExclusionPattern generates a regex pattern to exclude ops namespaces for dev users.
+// Returns empty string if no ops namespaces are configured.
+func (c NamespaceClassifierConfig) OpsNamespaceExclusionPattern(cluster string) string {
+	normalizedCluster := strings.TrimSpace(cluster)
+
+	opsExact := normalizeNamespaceList(c.OpsExact)
+	opsPrefixes := normalizeNamespaceList(c.OpsPrefixes)
+	opsSuffixes := normalizeNamespaceList(c.OpsSuffixes)
+
 	if override, ok := c.ClusterOverrides[normalizedCluster]; ok {
-		if strings.TrimSpace(override.DefaultSegment) != "" {
-			defaultSegment = strings.TrimSpace(override.DefaultSegment)
-		}
 		opsExact = append(opsExact, normalizeNamespaceList(override.OpsExact)...)
 		opsPrefixes = append(opsPrefixes, normalizeNamespaceList(override.OpsPrefixes)...)
 		opsSuffixes = append(opsSuffixes, normalizeNamespaceList(override.OpsSuffixes)...)
 	}
 
-	segment := defaultSegment
-	if matchesNamespaceClassifier(normalizedNamespace, opsExact, opsPrefixes, opsSuffixes) {
-		segment = "ops"
+	if len(opsExact) == 0 && len(opsPrefixes) == 0 && len(opsSuffixes) == 0 {
+		return ""
 	}
 
-	if normalizedCluster == "" {
-		return segment
+	patterns := make([]string, 0, len(opsExact)+len(opsPrefixes)+len(opsSuffixes))
+
+	// Exact matches: "monitoring" → "monitoring"
+	for _, exact := range opsExact {
+		patterns = append(patterns, exact)
 	}
-	return normalizedCluster + "." + segment
+
+	// Prefix matches: "kube-" → "kube-.*"
+	for _, prefix := range opsPrefixes {
+		patterns = append(patterns, prefix+".*")
+	}
+
+	// Suffix matches: "-system" → ".*-system"
+	for _, suffix := range opsSuffixes {
+		patterns = append(patterns, ".*"+suffix)
+	}
+
+	return strings.Join(patterns, "|")
 }
 
 func matchesNamespaceClassifier(namespace string, opsExact, opsPrefixes, opsSuffixes []string) bool {

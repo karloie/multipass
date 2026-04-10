@@ -18,6 +18,11 @@ const (
 	backendTypeGeneric    = "generic"
 
 	headerXScopeOrgID = "X-Scope-OrgID"
+
+	// Segments for access control
+	segmentDev   = "dev"
+	segmentOps   = "ops"
+	segmentAdmin = "admin"
 )
 
 // injectBackendHeaders adds backend headers.
@@ -101,6 +106,41 @@ func resolveWebUser(userInfo *auth.UserInfo) string {
 		return strings.TrimSpace(userInfo.Username)
 	}
 	return strings.TrimSpace(userInfo.ID)
+}
+
+// resolveSegment determines the user's segment (dev, ops, admin) based on internal and elevated roles.
+// Priority: admin > ops > dev (defaults to dev if no recognized roles).
+func resolveSegment(req *http.Request) string {
+	perms, ok := req.Context().Value(permissionsKey).(*authz.Permission)
+	if !ok || perms == nil {
+		return segmentDev
+	}
+
+	// Combine internal roles and elevated roles
+	allRoles := make([]string, 0, len(perms.InternalRoles)+len(perms.ElevatedRoles))
+	allRoles = append(allRoles, perms.InternalRoles...)
+	for _, elevated := range perms.ElevatedRoles {
+		allRoles = append(allRoles, elevated.Role)
+	}
+
+	// Check for admin first (highest priority)
+	for _, role := range allRoles {
+		normalized := strings.ToLower(strings.TrimSpace(role))
+		if normalized == "admin" || normalized == "plat-admin" {
+			return segmentAdmin
+		}
+	}
+
+	// Check for ops roles
+	for _, role := range allRoles {
+		normalized := strings.ToLower(strings.TrimSpace(role))
+		if normalized == "ops" || normalized == "plat-ops" || normalized == "devops" {
+			return segmentOps
+		}
+	}
+
+	// Default to dev segment
+	return segmentDev
 }
 
 func resolveWebGroups(req *http.Request, userInfo *auth.UserInfo) []string {

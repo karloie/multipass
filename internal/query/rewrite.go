@@ -41,6 +41,7 @@ type Context struct {
 	Host      string
 	Route     string
 	Method    string
+	Segment   string // User segment: dev, ops, admin
 }
 
 type RewriteConfig struct {
@@ -242,6 +243,7 @@ func newRenderer(ctx Context) renderer {
 			"{{host}}", strings.TrimSpace(ctx.Host),
 			"{{route}}", normalizeRoute(ctx.Route),
 			"{{method}}", strings.TrimSpace(ctx.Method),
+			"{{segment}}", strings.TrimSpace(ctx.Segment),
 		),
 	}
 }

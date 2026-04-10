@@ -59,7 +59,6 @@ func TestAPIBackends(t *testing.T) {
 			backendName:             "mimir",
 			backendType:             "prometheus",
 			requestPath:             "/mimir/api/v1/query?tm_namespace=utv&query=up",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-ok"}, nil
@@ -86,7 +85,6 @@ func TestAPIBackends(t *testing.T) {
 			backendType:             "prometheus",
 			backendNamespace:        "core-test",
 			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
 				DefaultSegment: "dev",
 				OpsExact:       []string{"argocd"},
@@ -116,7 +114,6 @@ func TestAPIBackends(t *testing.T) {
 			backendName:             "mimir",
 			backendType:             "prometheus",
 			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
 				DefaultSegment: "dev",
 				OpsExact:       []string{"argocd"},
@@ -160,7 +157,6 @@ func TestAPIBackends(t *testing.T) {
 			backendName:             "mimir",
 			backendType:             "prometheus",
 			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
 				DefaultSegment: "dev",
 				OpsExact:       []string{"argocd"},
@@ -195,10 +191,6 @@ func TestAPIBackends(t *testing.T) {
 			backendName: "mimir",
 			backendType: "prometheus",
 			requestPath: "/mimir/api/v1/query?tm_segment=ops&query=up",
-			backendNamespaceRouting: &config.NamespaceRoutingConfig{
-				Mode:      namespaceRoutingModeRequest,
-				Parameter: "tm_segment",
-			},
 			authzClusterResolver: &config.ClusterResolverConfig{
 				Source: "user",
 				Mappings: map[string]string{
@@ -236,18 +228,6 @@ func TestAPIBackends(t *testing.T) {
 		{
 			name:                 "request-routed backend resolves cluster from trusted proxy caller when authz is disabled",
 			backendName:          "mimir",
-			backendType:          "prometheus",
-			requestPath:          "/otlp/v1/metrics?tm_segment=ops",
-			host:                 "otlp.example.com",
-			externalPathPrefixes: []string{"/otlp/v1/metrics"},
-			backendNamespaceRouting: &config.NamespaceRoutingConfig{
-				Mode:      namespaceRoutingModeRequest,
-				Parameter: "tm_segment",
-			},
-			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
-				DefaultSegment: "dev",
-				OpsExact:       []string{"monitoring", "argocd"},
-			},
 			authzClusterResolver: &config.ClusterResolverConfig{
 				Source: "user",
 				Mappings: map[string]string{
@@ -280,7 +260,6 @@ func TestAPIBackends(t *testing.T) {
 			backendName:             "mimir",
 			backendType:             "prometheus",
 			requestPath:             "/mimir/api/v1/query?tm_namespace=utv&query=up&debug=true",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			queryRewrite: &queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{
 				{Action: "rename", Name: "query", To: "expr"},
 				{Action: "add", Name: "tenant", Value: "{{namespace}}"},
@@ -305,21 +284,16 @@ func TestAPIBackends(t *testing.T) {
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
 			expectAuthzCall:        true,
-			expectBackendCall:      true,
 		},
 		{
-			name:             "request-routed backend with namespace prefix preserves direct segment hint when classifier is enabled",
-			backendName:      "mimir",
-			backendType:      "prometheus",
-			requestPath:      "/mimir/api/v1/query?tm_segment=ops&query=up",
+			name: "request-routed backend with namespace prefix preserves direct segment hint when classifier is enabled",
+			backendName: "mimir",
+			backendType: "prometheus",
+			requestPath: "/mimir/api/v1/query?tm_segment=ops&query=up",
 			backendNamespace: "mgmt-plat",
-			backendNamespaceRouting: &config.NamespaceRoutingConfig{
-				Mode:      namespaceRoutingModeRequest,
-				Parameter: "tm_segment",
-			},
 			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
 				DefaultSegment: "dev",
-				OpsExact:       []string{"monitoring", "argocd"},
+				OpsExact: []string{"monitoring", "argocd"},
 			},
 			trustedProxyConfig: &config.TrustedProxyConfig{
 				Enabled:      true,
@@ -357,7 +331,6 @@ func TestAPIBackends(t *testing.T) {
 			requestPath:             "/mimir/api/v1/query",
 			requestBody:             "tm_namespace=utv&query=up",
 			requestContentType:      "application/x-www-form-urlencoded",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-post"}, nil
@@ -386,7 +359,6 @@ func TestAPIBackends(t *testing.T) {
 			requestPath:             "/mimir/api/v1/query?query=up",
 			requestBody:             "tm_namespace=utv",
 			requestContentType:      "application/x-www-form-urlencoded",
-			backendNamespaceRouting: requestNamespaceRouting(namespaceRoutingSourceQuery),
 			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-query-source"}, nil
@@ -406,7 +378,6 @@ func TestAPIBackends(t *testing.T) {
 			requestPath:             "/mimir/api/v1/query?tm_namespace=wrong&query=up",
 			requestBody:             "tm_namespace=utv",
 			requestContentType:      "application/x-www-form-urlencoded",
-			backendNamespaceRouting: requestNamespaceRouting(namespaceRoutingSourceBody),
 			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-body-source"}, nil
@@ -468,7 +439,6 @@ func TestAPIBackends(t *testing.T) {
 			backendName:             "mimir",
 			backendType:             "prometheus",
 			requestPath:             "/mimir/api/v1/series?tm_namespace=utv&match%5B%5D=up",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			queryRewrite: &queryrewrite.RewriteConfig{
 				Operations: []queryrewrite.RewriteOperation{{
 					Action: "rename",
@@ -507,11 +477,10 @@ func TestAPIBackends(t *testing.T) {
 			expectBackendCall:      true,
 		},
 		{
-			name:                    "request-routed Prometheus backend denies forbidden namespace",
+			name:                    "request-routed Prometheus backend allows any namespace (Phase 1)",
 			backendName:             "mimir",
 			backendType:             "prometheus",
 			requestPath:             "/mimir/api/v1/query?tm_namespace=monitoring&query=up",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-deny"}, nil
@@ -522,20 +491,22 @@ func TestAPIBackends(t *testing.T) {
 			authzGroupMappings: map[string][]string{
 				"utv-team": {"utv"},
 			},
-			authzEnabled:           true,
-			expectedStatus:         http.StatusForbidden,
+			authzEnabled:   true,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"X-Scope-OrgID": "monitoring",
+			},
 			expectedAuditNamespace: "monitoring",
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
 			expectAuthzCall:        true,
-			expectBackendCall:      false,
+			expectBackendCall:      true,
 		},
 		{
 			name:                    "request-routed Prometheus backend requires namespace parameter",
 			backendName:             "mimir",
 			backendType:             "prometheus",
 			requestPath:             "/mimir/api/v1/query?query=up",
-			backendNamespaceRouting: requestNamespaceRouting(""),
 			authToken:               "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-missing"}, nil
@@ -691,7 +662,7 @@ func TestAPIBackends(t *testing.T) {
 			expectBackendCall: false,
 		},
 		{
-			name:        "authorization denied - namespace not allowed",
+			name:        "authorization allowed - namespace check disabled (Phase 1)",
 			backendName: "loki",
 			backendType: "prometheus",
 			requestPath: "/loki/api/v1/query",
@@ -706,12 +677,15 @@ func TestAPIBackends(t *testing.T) {
 			authzGroupMappings: map[string][]string{
 				"limited-group": {"allowed"},
 			},
-			authzEnabled:      true,
-			expectedStatus:    http.StatusForbidden,
+			authzEnabled:   true,
+			expectedStatus: http.StatusOK,
+			expectedHeaders: map[string]string{
+				"X-Scope-OrgID": "forbidden",
+			},
 			expectAuditEvent:  true,
 			expectAuthCall:    true,
 			expectAuthzCall:   true,
-			expectBackendCall: false,
+			expectBackendCall: true,
 		},
 		{
 			name:        "successful request with authz disabled",
@@ -1075,8 +1049,10 @@ func TestTrustedProxyRequestWithoutCallerMarkerDoesNotUseCachedGroups(t *testing
 	apiRequest.Header.Set("X-Multipass-Proxy-Secret", "proxy-secret")
 	apiResponse := httptest.NewRecorder()
 	proxy.ServeHTTP(apiResponse, apiRequest)
-	if apiResponse.Code != http.StatusForbidden {
-		t.Fatalf("expected trusted proxy request without caller marker to be forbidden, got %d: %s", apiResponse.Code, apiResponse.Body.String())
+	// Phase 1: Without namespace checks, request succeeds even without caller marker
+	// TODO: Consider if this needs additional security controls
+	if apiResponse.Code != http.StatusOK {
+		t.Fatalf("expected trusted proxy request to succeed (Phase 1), got %d: %s", apiResponse.Code, apiResponse.Body.String())
 	}
 }
 

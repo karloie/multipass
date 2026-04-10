@@ -43,16 +43,6 @@ const (
 	headerContentType   = "Content-Type"
 	headerBearerPrefix  = "Bearer "
 
-	queryParamNamespace = "namespace"
-
-	namespaceRoutingModeRequest = "request"
-	namespaceRoutingModeFixed   = "fixed"
-	namespaceRoutingModeCaller  = "caller"
-	namespaceRoutingSourceQuery = "query"
-	namespaceRoutingSourceBody  = "body"
-	namespaceRoutingSourceBoth  = "both"
-
-	defaultNamespace    = "default"
 	defaultTeamParam    = "tm_team_id"
 	defaultTeamHeader   = "X-Multipass-Team-ID"
 	auditWriteTimeout   = 2 * time.Second
@@ -430,15 +420,6 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 			return
 		}
 
-		if !hasNamespaceAccess(perms.AllowedNamespaces, namespace) {
-			slog.WarnContext(r.Context(), "access denied",
-				slog.String("user", userInfo.ID),
-				slog.String("namespace", namespace),
-			)
-			p.logAudit(r.Context(), userInfo, resolved.name, namespace, start, http.StatusForbidden, "access denied to namespace", perms)
-			http.Error(w, fmt.Sprintf(errMsgAccessDenied, namespace), http.StatusForbidden)
-			return
-		}
 		r = r.WithContext(context.WithValue(r.Context(), permissionsKey, perms))
 
 		if p.teamPolicy != nil {
@@ -468,7 +449,7 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	r, err = rewriteBackendQuery(r, resolved, namespace)
+	r, err = p.rewriteBackendQuery(r, resolved, namespace)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -518,8 +499,108 @@ func resolveRequestTeamID(r *http.Request, cfg config.TeamAccessConfig) string {
 
 	return ""
 }
-func rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace string) (*http.Request, error) {
-	if r == nil || !queryrewrite.HasRules(resolved.config.QueryRewrite) {
+
+// buildSegmentFilteringConfig creates a queryRewrite config that includes segment-based namespace filtering
+// for dev users. Returns the original config if segment is ops/admin or no filtering needed.
+func buildSegmentFilteringConfig(p *Proxy, baseConfig *queryrewrite.RewriteConfig, segment string, cluster string) *queryrewrite.RewriteConfig {
+	// Only apply filtering for dev segment
+	if segment != segmentDev {
+		return baseConfig
+	}
+
+	// Get ops namespace exclusion pattern
+	exclusionPattern := p.config.Authz.NamespaceClassifier.OpsNamespaceExclusionPattern(cluster)
+	if exclusionPattern == "" {
+		// No ops namespaces configured, no filtering needed
+		return baseConfig
+	}
+
+	// Build semantic rules for dev segment filtering
+	devFilteringRules := []queryrewrite.SemanticRule{
+		{
+			Language: "promql",
+			Params:   []string{"query"},
+			Routes:   []string{"/api/v1/query", "/api/v1/query_range", "/api/v1/series"},
+			Require: []queryrewrite.MatcherRequirement{
+				{
+					Name:     "namespace",
+					Operator: "!~",
+					Value:    exclusionPattern,
+				},
+			},
+		},
+		{
+			Language: "selector",
+			Params:   []string{"match[]"},
+			Routes:   []string{"/api/v1/series", "/api/v1/labels", "/api/v1/label/*"},
+			Require: []queryrewrite.MatcherRequirement{
+				{
+					Name:     "namespace",
+					Operator: "!~",
+					Value:    exclusionPattern,
+				},
+			},
+		},
+		{
+			Language: "logql",
+			Params:   []string{"query"},
+			Routes:   []string{"/loki/api/v1/query", "/loki/api/v1/query_range", "/loki/api/v1/series"},
+			Require: []queryrewrite.MatcherRequirement{
+				{
+					Name:     "namespace",
+					Operator: "!~",
+					Value:    exclusionPattern,
+				},
+			},
+		},
+		{
+			Language: "traceql",
+			Params:   []string{"q"},
+			Routes:   []string{"/api/search", "/api/traces/*"},
+			Require: []queryrewrite.MatcherRequirement{
+				{
+					Name:     "resource.namespace",
+					Operator: "!=",
+					Value:    exclusionPattern,
+				},
+			},
+		},
+	}
+
+	// If no base config, use only segment filtering
+	if baseConfig == nil {
+		return &queryrewrite.RewriteConfig{
+			Semantics: devFilteringRules,
+		}
+	}
+
+	// Clone and augment base config
+	augmented := &queryrewrite.RewriteConfig{
+		Operations:  append([]queryrewrite.RewriteOperation(nil), baseConfig.Operations...),
+		Semantics:   append([]queryrewrite.SemanticRule(nil), baseConfig.Semantics...),
+		TenantLabel: baseConfig.TenantLabel,
+	}
+
+	// Append segment filtering rules
+	augmented.Semantics = append(augmented.Semantics, devFilteringRules...)
+
+	return augmented
+}
+
+func (p *Proxy) rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace string) (*http.Request, error) {
+	// Determine segment for filtering
+	segment := resolveSegment(r)
+
+	// Determine cluster for namespace classification
+	cluster := ""
+	if userInfo, ok := r.Context().Value(userInfoKey).(*auth.UserInfo); ok && userInfo != nil {
+		cluster = p.config.Authz.ClusterResolver.ResolveCluster(userInfo)
+	}
+
+	// Build config with segment filtering
+	effectiveConfig := buildSegmentFilteringConfig(p, resolved.config.QueryRewrite, segment, cluster)
+
+	if r == nil || !queryrewrite.HasRules(effectiveConfig) {
 		return r, nil
 	}
 
@@ -531,246 +612,27 @@ func rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace st
 		}
 	}
 
-	return queryrewrite.RewriteRequest(r, resolved.config.QueryRewrite, queryrewrite.Context{
+	return queryrewrite.RewriteRequest(r, effectiveConfig, queryrewrite.Context{
 		Backend:   resolved.name,
 		Namespace: namespace,
 		Host:      r.Host,
 		Route:     route,
 		Method:    r.Method,
+		Segment:   segment,
 	})
 }
 
 func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig config.BackendConfig, userInfo *auth.UserInfo, r *http.Request) (string, error) {
-	if backendConfig.NamespaceRouting != nil && backendConfig.NamespaceRouting.Mode != "" {
-		switch backendConfig.NamespaceRouting.Mode {
-		case namespaceRoutingModeFixed:
-			return strings.TrimSpace(backendConfig.Namespace), nil
-		case namespaceRoutingModeCaller:
-			cluster := authzConfig.ClusterResolver.ResolveCluster(userInfo)
-			if cluster == "" {
-				return "", fmt.Errorf("unable to resolve cluster for caller namespace routing")
-			}
-			return resolveNamespaceAliases(authzConfig, cluster), nil
-		case namespaceRoutingModeRequest:
-			if r == nil {
-				return "", fmt.Errorf(errMsgNamespaceMissing, backendConfig.NamespaceRouting.Parameter)
-			}
-			namespace, err := requestRoutingParameterValue(r, backendConfig.NamespaceRouting)
-			if err != nil {
-				return "", err
-			}
-			if namespace == "" {
-				return "", fmt.Errorf(errMsgNamespaceMissing, backendConfig.NamespaceRouting.Parameter)
-			}
-			if segmentNamespace, ok := resolveDirectSegmentNamespace(strings.TrimSpace(backendConfig.Namespace), namespace); ok {
-				return segmentNamespace, nil
-			}
-			if strings.TrimSpace(backendConfig.Namespace) != "" && authzConfig.NamespaceClassifier.HasRules() {
-				return authzConfig.NamespaceClassifier.Classify(backendConfig.Namespace, namespace), nil
-			}
-			if authzConfig.NamespaceClassifier.HasRules() && authzConfig.ClusterResolver.HasMappings() {
-				cluster := authzConfig.ClusterResolver.ResolveCluster(userInfo)
-				if cluster == "" {
-					return "", fmt.Errorf("unable to resolve cluster for request namespace routing")
-				}
-				if segmentNamespace, ok := resolveDirectSegmentNamespace(cluster, namespace); ok {
-					return segmentNamespace, nil
-				}
-				return authzConfig.NamespaceClassifier.Classify(cluster, namespace), nil
-			}
-			if authzConfig.ClusterResolver.HasMappings() {
-				cluster := authzConfig.ClusterResolver.ResolveCluster(userInfo)
-				if cluster == "" {
-					return "", fmt.Errorf("unable to resolve cluster for request namespace routing")
-				}
-				return cluster + "." + strings.ToLower(strings.TrimSpace(namespace)), nil
-			}
-			return namespace, nil
-		}
-	}
+	// Simplified: use backend.namespace if set, otherwise backend is single-tenant (no namespace)
 	if namespace := strings.TrimSpace(backendConfig.Namespace); namespace != "" {
-		return resolveNamespaceAliases(authzConfig, namespace), nil
+		return namespace, nil
 	}
-	if r != nil {
-		if namespace := strings.TrimSpace(r.URL.Query().Get(queryParamNamespace)); namespace != "" {
-			return resolveNamespaceAliases(authzConfig, namespace), nil
-		}
-	}
-	return defaultNamespace, nil
-}
-
-func resolveNamespaceAliases(authzConfig config.AuthzConfig, namespace string) string {
-	localCluster := strings.TrimSpace(authzConfig.LocalCluster)
-	if namespace == "" || localCluster == "" {
-		return namespace
-	}
-
-	parts := strings.Split(namespace, "|")
-	resolved := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		if trimmed == "local" {
-			resolved = append(resolved, localCluster)
-			continue
-		}
-		if strings.HasPrefix(trimmed, "local.") {
-			resolved = append(resolved, localCluster+strings.TrimPrefix(trimmed, "local"))
-			continue
-		}
-		resolved = append(resolved, trimmed)
-	}
-
-	return strings.Join(resolved, "|")
-}
-
-func resolveDirectSegmentNamespace(cluster, namespace string) (string, bool) {
-	trimmedCluster := strings.TrimSpace(cluster)
-	if trimmedCluster == "" {
-		return "", false
-	}
-
-	switch strings.ToLower(strings.TrimSpace(namespace)) {
-	case "dev", "ops":
-		return trimmedCluster + "." + strings.ToLower(strings.TrimSpace(namespace)), true
-	default:
-		return "", false
-	}
+	return "", nil
 }
 
 func stripNamespaceRoutingQueryParam(r *http.Request, backendConfig config.BackendConfig) (*http.Request, error) {
-	if r == nil || backendConfig.NamespaceRouting == nil || backendConfig.NamespaceRouting.Mode != namespaceRoutingModeRequest {
-		return r, nil
-	}
-
-	cloned := r.Clone(r.Context())
-	cloned.URL = cloneURL(r.URL)
-	if namespaceRoutingReadsQuery(backendConfig.NamespaceRouting) {
-		query := cloned.URL.Query()
-		query.Del(backendConfig.NamespaceRouting.Parameter)
-		cloned.URL.RawQuery = query.Encode()
-	}
-
-	if !namespaceRoutingReadsBody(backendConfig.NamespaceRouting) || !hasFormURLEncodedBody(r) {
-		return cloned, nil
-	}
-
-	bodyValues, err := readFormURLEncodedBodyValues(r)
-	if err != nil {
-		return nil, err
-	}
-	bodyValues.Del(backendConfig.NamespaceRouting.Parameter)
-	rewrittenBody := bodyValues.Encode()
-	cloned.Body = io.NopCloser(strings.NewReader(rewrittenBody))
-	cloned.ContentLength = int64(len(rewrittenBody))
-	cloned.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(strings.NewReader(rewrittenBody)), nil
-	}
-	cloned.PostForm = bodyValues
-	cloned.Form = cloneFormValues(bodyValues)
-
-	return cloned, nil
-}
-
-func requestRoutingParameterValue(r *http.Request, routing *config.NamespaceRoutingConfig) (string, error) {
-	if r == nil {
-		return "", nil
-	}
-	if namespaceRoutingReadsQuery(routing) {
-		if value := strings.TrimSpace(r.URL.Query().Get(routing.Parameter)); value != "" {
-			return value, nil
-		}
-	}
-	if !namespaceRoutingReadsBody(routing) || !hasFormURLEncodedBody(r) {
-		return "", nil
-	}
-	bodyValues, err := readFormURLEncodedBodyValues(r)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(bodyValues.Get(routing.Parameter)), nil
-}
-
-func namespaceRoutingReadsQuery(routing *config.NamespaceRoutingConfig) bool {
-	return namespaceRoutingUsesSource(routing, namespaceRoutingSourceQuery)
-}
-
-func namespaceRoutingReadsBody(routing *config.NamespaceRoutingConfig) bool {
-	return namespaceRoutingUsesSource(routing, namespaceRoutingSourceBody)
-}
-
-func namespaceRoutingUsesSource(routing *config.NamespaceRoutingConfig, source string) bool {
-	switch normalizedNamespaceRoutingSource(routing) {
-	case namespaceRoutingSourceBoth, source:
-		return true
-	default:
-		return false
-	}
-}
-
-func normalizedNamespaceRoutingSource(routing *config.NamespaceRoutingConfig) string {
-	if routing == nil {
-		return namespaceRoutingSourceBoth
-	}
-	source := strings.ToLower(strings.TrimSpace(routing.Source))
-	if source == "" {
-		return namespaceRoutingSourceBoth
-	}
-	return source
-}
-
-func hasFormURLEncodedBody(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	switch r.Method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-	default:
-		return false
-	}
-	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get(headerContentType)))
-	return strings.HasPrefix(contentType, "application/x-www-form-urlencoded")
-}
-
-func readFormURLEncodedBodyValues(r *http.Request) (url.Values, error) {
-	if r == nil || r.Body == nil {
-		return url.Values{}, nil
-	}
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, err
-	}
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(strings.NewReader(string(body)))
-	if len(body) == 0 {
-		return url.Values{}, nil
-	}
-	values, err := url.ParseQuery(string(body))
-	if err != nil {
-		return nil, err
-	}
-	return values, nil
-}
-
-func cloneFormValues(values url.Values) url.Values {
-	if values == nil {
-		return url.Values{}
-	}
-	cloned := make(url.Values, len(values))
-	for key, items := range values {
-		cloned[key] = append([]string(nil), items...)
-	}
-	return cloned
-}
-
-func cloneURL(source *url.URL) *url.URL {
-	if source == nil {
-		return &url.URL{}
-	}
-	cloned := *source
-	return &cloned
+	// No-op: namespace routing removed for simplicity
+	return r, nil
 }
 
 // logAudit records an audit event.
@@ -963,36 +825,6 @@ func (r *responseRecorder) Push(target string, opts *http.PushOptions) error {
 
 func (r *responseRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
-}
-
-// hasNamespaceAccess checks if the allowed namespaces list contains the requested namespace
-func hasNamespaceAccess(allowedNamespaces []string, namespace string) bool {
-	requestedNamespaces := strings.Split(namespace, "|")
-	allowed := make(map[string]struct{}, len(allowedNamespaces))
-	for _, ns := range allowedNamespaces {
-		trimmed := strings.TrimSpace(ns)
-		if trimmed == "" {
-			continue
-		}
-		if trimmed == "*" {
-			return true
-		}
-		allowed[trimmed] = struct{}{}
-	}
-
-	matched := false
-	for _, requested := range requestedNamespaces {
-		trimmed := strings.TrimSpace(requested)
-		if trimmed == "" {
-			continue
-		}
-		matched = true
-		if _, ok := allowed[trimmed]; !ok {
-			return false
-		}
-	}
-
-	return matched
 }
 
 // ServeHTTP implements http.Handler

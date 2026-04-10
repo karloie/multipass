@@ -238,81 +238,7 @@ func displayAllowedNamespaces(cfg *config.Config, userInfo *auth.UserInfo, allow
 	if len(allowedNamespaces) == 0 {
 		return nil
 	}
-
-	if cfg == nil {
-		return append([]string(nil), allowedNamespaces...)
-	}
-
-	resolvedClusters := statusResolvedClusters(cfg, userInfo)
-	backendClusters := statusRequestRoutedBackendClusters(cfg)
-	visibleNamespaces := make(map[string]struct{}, len(allowedNamespaces))
-
-	for _, namespace := range allowedNamespaces {
-		trimmedNamespace := strings.TrimSpace(namespace)
-		if trimmedNamespace == "" {
-			continue
-		}
-
-		if trimmedNamespace == "*" || isDerivedNamespace(trimmedNamespace, resolvedClusters, backendClusters, cfg.Authz.NamespaceClassifier) {
-			visibleNamespaces[trimmedNamespace] = struct{}{}
-			continue
-		}
-
-		derivedNamespaces := deriveVisibleNamespaces(cfg, trimmedNamespace, resolvedClusters, backendClusters)
-		if len(derivedNamespaces) == 0 {
-			visibleNamespaces[trimmedNamespace] = struct{}{}
-			continue
-		}
-
-		for _, derivedNamespace := range derivedNamespaces {
-			visibleNamespaces[derivedNamespace] = struct{}{}
-		}
-	}
-
-	if len(visibleNamespaces) == 0 {
-		return nil
-	}
-
-	result := make([]string, 0, len(visibleNamespaces))
-	for namespace := range visibleNamespaces {
-		result = append(result, namespace)
-	}
-	sort.Strings(result)
-
-	return result
-}
-
-func deriveVisibleNamespaces(cfg *config.Config, namespace string, resolvedClusters, backendClusters []string) []string {
-	authzConfig := cfg.Authz
-	if authzConfig.NamespaceClassifier.HasRules() {
-		derivedNamespaces := make([]string, 0, len(resolvedClusters)+len(backendClusters)+1)
-		for _, cluster := range backendClusters {
-			derivedNamespaces = append(derivedNamespaces, authzConfig.NamespaceClassifier.Classify(cluster, namespace))
-		}
-		for _, cluster := range resolvedClusters {
-			derivedNamespaces = append(derivedNamespaces, authzConfig.NamespaceClassifier.Classify(cluster, namespace))
-		}
-		if len(derivedNamespaces) == 0 {
-			derivedNamespaces = append(derivedNamespaces, authzConfig.NamespaceClassifier.Classify("", namespace))
-		}
-		return derivedNamespaces
-	}
-
-	if len(resolvedClusters) == 0 {
-		return nil
-	}
-
-	normalizedNamespace := strings.ToLower(strings.TrimSpace(namespace))
-	if normalizedNamespace == "" {
-		return nil
-	}
-
-	derivedNamespaces := make([]string, 0, len(resolvedClusters))
-	for _, cluster := range resolvedClusters {
-		derivedNamespaces = append(derivedNamespaces, cluster+"."+normalizedNamespace)
-	}
-
-	return derivedNamespaces
+	return append([]string(nil), allowedNamespaces...)
 }
 
 func statusResolvedClusters(cfg *config.Config, userInfo *auth.UserInfo) []string {
@@ -358,29 +284,6 @@ func statusRequestRoutedBackendClusters(cfg *config.Config) []string {
 	sort.Strings(result)
 
 	return result
-}
-
-func isDerivedNamespace(namespace string, resolvedClusters, backendClusters []string, classifier config.NamespaceClassifierConfig) bool {
-	for _, cluster := range resolvedClusters {
-		if strings.HasPrefix(namespace, cluster+".") {
-			return true
-		}
-	}
-	for _, cluster := range backendClusters {
-		if strings.HasPrefix(namespace, cluster+".") {
-			return true
-		}
-	}
-
-	if len(resolvedClusters) == 0 && len(backendClusters) == 0 && classifier.HasRules() {
-		defaultSegment := strings.TrimSpace(classifier.DefaultSegment)
-		if defaultSegment == "" {
-			defaultSegment = "dev"
-		}
-		return namespace == "ops" || namespace == defaultSegment
-	}
-
-	return false
 }
 
 func elevatedRoleNames(roles []authz.ElevatedRole) []string {

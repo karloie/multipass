@@ -415,11 +415,6 @@ func TestNamespaceClassifierClassify(t *testing.T) {
 		DefaultSegment: "dev",
 		OpsExact:       []string{"monitoring"},
 		OpsPrefixes:    []string{"kube-"},
-		ClusterOverrides: map[string]NamespaceClassifierOverride{
-			"tool-test": {
-				OpsExact: []string{"arc-runners"},
-			},
-		},
 	}
 
 	tests := []struct {
@@ -428,10 +423,10 @@ func TestNamespaceClassifierClassify(t *testing.T) {
 		namespace string
 		want      string
 	}{
-		{name: "base exact match becomes ops scope", cluster: "core-test", namespace: "monitoring", want: "core-test.ops"},
-		{name: "cluster override extends ops rules", cluster: "tool-test", namespace: "arc-runners", want: "tool-test.ops"},
-		{name: "default segment used when no ops rule matches", cluster: "core-test", namespace: "team-a", want: "core-test.dev"},
-		{name: "classifier can return segment without cluster prefix", cluster: "", namespace: "kube-system", want: "ops"},
+		{name: "base exact match becomes ops segment", cluster: "core-test", namespace: "monitoring", want: "ops"},
+		{name: "default segment used when no ops rule matches", cluster: "core-test", namespace: "team-a", want: "dev"},
+		{name: "classifier returns segment only", cluster: "", namespace: "kube-system", want: "ops"},
+		{name: "prefix match becomes ops segment", cluster: "core-test", namespace: "kube-dns", want: "ops"},
 	}
 
 	for _, tt := range tests {

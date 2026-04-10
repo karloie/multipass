@@ -26,17 +26,6 @@ import (
 
 const testRequestRoutingParameter = "tm_namespace"
 
-func requestNamespaceRouting(source string) *config.NamespaceRoutingConfig {
-	routing := &config.NamespaceRoutingConfig{
-		Mode:      namespaceRoutingModeRequest,
-		Parameter: testRequestRoutingParameter,
-	}
-	if source != "" {
-		routing.Source = source
-	}
-	return routing
-}
-
 // createTestJWT creates a simple unsigned JWT for testing.
 // This exercises real JWT parsing code without requiring signature verification.
 func createTestJWT(userID string) string {
@@ -164,7 +153,6 @@ type proxyTestCase struct {
 	browserUser              *auth.UserInfo
 	namespace                string
 	requestHeaders           map[string]string
-	backendNamespaceRouting  *config.NamespaceRoutingConfig
 	authzNamespaceClassifier *config.NamespaceClassifierConfig
 	authzClusterResolver     *config.ClusterResolverConfig
 	authValidateFunc         func(ctx context.Context, token string) (*auth.UserInfo, error)
@@ -222,50 +210,6 @@ func TestResponseRecorderSupportsOptionalInterfaces(t *testing.T) {
 
 	if recorder.Unwrap() != wrapped {
 		t.Fatalf("expected Unwrap to return the underlying ResponseWriter")
-	}
-}
-
-func TestResolveNamespaceAliases(t *testing.T) {
-	tests := []struct {
-		name         string
-		localCluster string
-		namespace    string
-		want         string
-	}{
-		{name: "leaves namespace unchanged without local cluster", namespace: "local.dev|local.ops", want: "local.dev|local.ops"},
-		{name: "expands local alias", localCluster: "mgmt-plat", namespace: "local.dev|local.ops", want: "mgmt-plat.dev|mgmt-plat.ops"},
-		{name: "expands mixed aliases", localCluster: "mgmt-plat", namespace: "local.dev|core.ops", want: "mgmt-plat.dev|core.ops"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := resolveNamespaceAliases(config.AuthzConfig{LocalCluster: tt.localCluster}, tt.namespace)
-			if got != tt.want {
-				t.Fatalf("unexpected namespace resolution: got %q want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestHasNamespaceAccess(t *testing.T) {
-	tests := []struct {
-		name      string
-		allowed   []string
-		namespace string
-		want      bool
-	}{
-		{name: "single exact namespace", allowed: []string{"mgmt-plat.dev"}, namespace: "mgmt-plat.dev", want: true},
-		{name: "multi namespace requires all scopes", allowed: []string{"mgmt-plat.dev"}, namespace: "mgmt-plat.dev|mgmt-plat.ops", want: false},
-		{name: "multi namespace exact all scopes", allowed: []string{"mgmt-plat.dev", "mgmt-plat.ops"}, namespace: "mgmt-plat.dev|mgmt-plat.ops", want: true},
-		{name: "wildcard matches multi namespace", allowed: []string{"*"}, namespace: "mgmt-plat.dev|mgmt-plat.ops", want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := hasNamespaceAccess(tt.allowed, tt.namespace); got != tt.want {
-				t.Fatalf("unexpected namespace access result: got %v want %v", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -334,7 +278,6 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 			Type:                 tt.backendType,
 			Endpoint:             backendServer.URL,
 			Namespace:            tt.backendNamespace,
-			NamespaceRouting:     tt.backendNamespaceRouting,
 			QueryRewrite:         tt.queryRewrite,
 			ExternalHost:         tt.host,
 			ExternalPathPrefixes: tt.externalPathPrefixes,
@@ -675,14 +618,13 @@ func TestCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
 		authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 			return &auth.UserInfo{ID: "otel-collector-core-test"}, nil
 		},
-		backendNamespaceRouting: &config.NamespaceRoutingConfig{Mode: namespaceRoutingModeCaller},
-		expectedStatus:          http.StatusOK,
-		expectedHeaders:         map[string]string{"X-Scope-OrgID": "core-test"},
-		expectAuditEvent:        true,
-		expectAuthCall:          true,
-		expectBackendCall:       true,
-		expectedBackendPath:     "/api/v1/push",
-		expectedAuditNamespace:  "core-test",
+		expectedStatus:         http.StatusOK,
+		expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test"},
+		expectAuditEvent:       true,
+		expectAuthCall:         true,
+		expectBackendCall:      true,
+		expectedBackendPath:    "/api/v1/push",
+		expectedAuditNamespace: "core-test",
 	})
 }
 
@@ -715,14 +657,13 @@ func TestExternalHostCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
 				"otel-collector-core-test": "core-test",
 			},
 		},
-		backendNamespaceRouting: &config.NamespaceRoutingConfig{Mode: namespaceRoutingModeCaller},
-		expectedStatus:          http.StatusOK,
-		expectedHeaders:         map[string]string{"X-Scope-OrgID": "core-test"},
-		expectAuditEvent:        true,
-		expectAuthCall:          false,
-		expectBackendCall:       true,
-		expectedBackendPath:     "/otlp/v1/metrics",
-		expectedAuditNamespace:  "core-test",
+		expectedStatus:         http.StatusOK,
+		expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test"},
+		expectAuditEvent:       true,
+		expectAuthCall:         false,
+		expectBackendCall:      true,
+		expectedBackendPath:    "/otlp/v1/metrics",
+		expectedAuditNamespace: "core-test",
 	})
 }
 

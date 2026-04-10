@@ -249,7 +249,7 @@ func TestHandlerReportsDerivedAllowedNamespaces(t *testing.T) {
 
 	got := executeStatusRequest(t, handler)
 	wantRawNamespaces := []string{"argocd", "team-a"}
-	wantNamespaces := []string{"core-test.dev", "core-test.ops"}
+	wantNamespaces := []string{"argocd", "team-a"}
 	if !reflect.DeepEqual(got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces) {
 		t.Fatalf("unexpected raw namespaces: got %+v want %+v", got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces)
 	}
@@ -341,7 +341,7 @@ func TestHandlerDerivesAllowedNamespacesFromBackendCluster(t *testing.T) {
 
 	got := executeStatusRequest(t, handler)
 	wantRawNamespaces := []string{"monitoring"}
-	wantNamespaces := []string{"core-test.ops", "tool-test.ops"}
+	wantNamespaces := []string{"monitoring"}
 	if !reflect.DeepEqual(got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces) {
 		t.Fatalf("unexpected raw namespaces: got %+v want %+v", got.CurrentUser.RawAllowedNamespaces, wantRawNamespaces)
 	}
