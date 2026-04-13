@@ -102,7 +102,7 @@ func matchesFilters(event AuditEvent, filters AuditFilters) bool {
 	if filters.Backend != "" && event.Backend != filters.Backend {
 		return false
 	}
-	if filters.Namespace != "" && event.Namespace != filters.Namespace {
+	if filters.Tenant != "" && event.Tenant != filters.Tenant {
 		return false
 	}
 	if filters.ElevatedAccessActive != nil && event.ElevatedAccessActive != *filters.ElevatedAccessActive {

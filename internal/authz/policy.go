@@ -66,8 +66,8 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 		return nil, fmt.Errorf("fetching elevated roles: %w", err)
 	}
 
-	// Build namespace access map
-	namespacesMap := make(map[string]bool)
+	// Build tenant access map
+	tenantsMap := make(map[string]bool)
 
 	// When PIM elevated roles are active, they COMPLETELY replace all other permissions
 	// This allows full privilege control including de-escalation (e.g., admin → dev for testing)
@@ -76,7 +76,7 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 		for _, elevatedRole := range elevatedRoles {
 			if namespaces, ok := p.groupMappings[elevatedRole.Role]; ok {
 				for _, ns := range namespaces {
-					namespacesMap[ns] = true
+					tenantsMap[ns] = true
 				}
 			}
 		}
@@ -85,7 +85,7 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 		for _, group := range externalGroups {
 			if namespaces, ok := p.groupMappings[group]; ok {
 				for _, ns := range namespaces {
-					namespacesMap[ns] = true
+					tenantsMap[ns] = true
 				}
 			}
 		}
@@ -93,24 +93,24 @@ func (p *PolicyEvaluator) EvaluatePermissions(ctx context.Context, userInfo *aut
 		for _, group := range internalRoles {
 			if namespaces, ok := p.groupMappings[group]; ok {
 				for _, ns := range namespaces {
-					namespacesMap[ns] = true
+					tenantsMap[ns] = true
 				}
 			}
 		}
 	}
 
-	allowedNamespaces := make([]string, 0, len(namespacesMap))
-	for ns := range namespacesMap {
-		allowedNamespaces = append(allowedNamespaces, ns)
+	allowedTenants := make([]string, 0, len(tenantsMap))
+	for ns := range tenantsMap {
+		allowedTenants = append(allowedTenants, ns)
 	}
-	sort.Strings(allowedNamespaces)
+	sort.Strings(allowedTenants)
 
 	permission := &Permission{
-		UserID:            permissionUserID(userInfo),
-		ExternalGroups:    append([]string(nil), externalGroups...),
-		InternalRoles:     append([]string(nil), internalRoles...),
-		ElevatedRoles:     append([]ElevatedRole(nil), elevatedRoles...),
-		AllowedNamespaces: allowedNamespaces,
+		UserID:         permissionUserID(userInfo),
+		ExternalGroups: append([]string(nil), externalGroups...),
+		InternalRoles:  append([]string(nil), internalRoles...),
+		ElevatedRoles:  append([]ElevatedRole(nil), elevatedRoles...),
+		AllowedTenants: allowedTenants,
 	}
 
 	p.setCachedPermission(cacheKey, permission)
@@ -175,23 +175,23 @@ func cloneStringSlicesMap(source map[string][]string) map[string][]string {
 	return cloned
 }
 
-func (p *PolicyEvaluator) CanAccessNamespace(ctx context.Context, userInfo *auth.UserInfo, namespace string) (bool, error) {
+func (p *PolicyEvaluator) CanAccessTenant(ctx context.Context, userInfo *auth.UserInfo, tenant string) (bool, error) {
 	perm, err := p.EvaluatePermissions(ctx, userInfo)
 	if err != nil {
 		return false, err
 	}
 
-	return namespacesAllowed(perm.AllowedNamespaces, namespace), nil
+	return tenantsAllowed(perm.AllowedTenants, tenant), nil
 }
 
-func namespacesAllowed(allowedNamespaces []string, namespace string) bool {
-	requestedNamespaces := splitNamespaces(namespace)
-	if len(requestedNamespaces) == 0 {
+func tenantsAllowed(allowedTenants []string, tenant string) bool {
+	requestedTenants := splitTenants(tenant)
+	if len(requestedTenants) == 0 {
 		return false
 	}
 
-	allowed := make(map[string]struct{}, len(allowedNamespaces))
-	for _, ns := range allowedNamespaces {
+	allowed := make(map[string]struct{}, len(allowedTenants))
+	for _, ns := range allowedTenants {
 		trimmed := strings.TrimSpace(ns)
 		if trimmed == "" {
 			continue
@@ -202,7 +202,7 @@ func namespacesAllowed(allowedNamespaces []string, namespace string) bool {
 		allowed[trimmed] = struct{}{}
 	}
 
-	for _, requested := range requestedNamespaces {
+	for _, requested := range requestedTenants {
 		if _, ok := allowed[requested]; !ok {
 			return false
 		}
@@ -211,8 +211,8 @@ func namespacesAllowed(allowedNamespaces []string, namespace string) bool {
 	return true
 }
 
-func splitNamespaces(namespace string) []string {
-	parts := strings.Split(namespace, "|")
+func splitTenants(tenant string) []string {
+	parts := strings.Split(tenant, "|")
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
 		trimmed := strings.TrimSpace(part)
@@ -301,10 +301,10 @@ func clonePermission(permission *Permission) *Permission {
 	}
 
 	return &Permission{
-		UserID:            permission.UserID,
-		ExternalGroups:    append([]string(nil), permission.ExternalGroups...),
-		InternalRoles:     append([]string(nil), permission.InternalRoles...),
-		ElevatedRoles:     append([]ElevatedRole(nil), permission.ElevatedRoles...),
-		AllowedNamespaces: append([]string(nil), permission.AllowedNamespaces...),
+		UserID:         permission.UserID,
+		ExternalGroups: append([]string(nil), permission.ExternalGroups...),
+		InternalRoles:  append([]string(nil), permission.InternalRoles...),
+		ElevatedRoles:  append([]ElevatedRole(nil), permission.ElevatedRoles...),
+		AllowedTenants: append([]string(nil), permission.AllowedTenants...),
 	}
 }

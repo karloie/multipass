@@ -50,8 +50,8 @@ func (p *Proxy) injectBackendHeaders(req *http.Request, backendConfig config.Bac
 
 // injectPrometheusHeaders adds the scope header.
 func (p *Proxy) injectPrometheusHeaders(req *http.Request) {
-	if namespace, ok := req.Context().Value(namespaceKey).(string); ok && namespace != "" {
-		req.Header.Set(headerXScopeOrgID, namespace)
+	if tenant, ok := req.Context().Value(tenantKey).(string); ok && tenant != "" {
+		req.Header.Set(headerXScopeOrgID, tenant)
 	}
 }
 

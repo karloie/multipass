@@ -20,7 +20,7 @@ auth:
     clientSecret: test-secret
     redirectUrl: https://multipass.example.com/login/generic_oauth
 
-# Authorization with namespace mapping
+# Authorization with tenant mapping
 authz:
   enabled: true
   provider: token
@@ -37,7 +37,7 @@ authz:
 
   groupMappings:
     admin:
-      - "*"  # Access all namespaces
+      - "*"  # Access all tenants
     devops:
       - prod
       - ops

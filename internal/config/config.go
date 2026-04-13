@@ -128,14 +128,14 @@ func (c OIDCConfig) EffectivePostLogoutRedirectURL() string {
 
 // AuthzConfig defines authorization settings.
 type AuthzConfig struct {
-	Enabled             bool                      `yaml:"enabled"`       // Enable authorization
-	Provider            string                    `yaml:"provider"`      // "token"
-	GroupMappings       map[string][]string       `yaml:"groupMappings"` // group -> namespaces
-	RoleMappings        map[string][]string       `yaml:"roleMappings,omitempty"`
-	TeamAccess          TeamAccessConfig          `yaml:"teamAccess,omitempty"`
-	LocalCluster        string                    `yaml:"localCluster,omitempty"`
-	ClusterResolver     ClusterResolverConfig     `yaml:"clusterResolver,omitempty"`
-	NamespaceClassifier NamespaceClassifierConfig `yaml:"namespaceClassifier,omitempty"`
+	Enabled           bool                    `yaml:"enabled"`       // Enable authorization
+	Provider          string                  `yaml:"provider"`      // "token"
+	GroupMappings     map[string][]string     `yaml:"groupMappings"` // group -> tenants
+	RoleMappings      map[string][]string     `yaml:"roleMappings,omitempty"`
+	TeamAccess        TeamAccessConfig        `yaml:"teamAccess,omitempty"`
+	LocalCluster      string                  `yaml:"localCluster,omitempty"`
+	ClusterResolver   ClusterResolverConfig   `yaml:"clusterResolver,omitempty"`
+	SegmentClassifier SegmentClassifierConfig `yaml:"segmentClassifier,omitempty"`
 }
 
 // TeamAccessConfig defines optional team-based request authorization.
@@ -171,17 +171,17 @@ type ClusterResolverConfig struct {
 	Mappings map[string]string `yaml:"mappings,omitempty"`
 }
 
-// NamespaceClassifierConfig maps raw namespaces to Multipass scopes.
-type NamespaceClassifierConfig struct {
-	DefaultSegment   string                                 `yaml:"defaultSegment,omitempty"`
-	OpsExact         []string                               `yaml:"opsExact,omitempty"`
-	OpsPrefixes      []string                               `yaml:"opsPrefixes,omitempty"`
-	OpsSuffixes      []string                               `yaml:"opsSuffixes,omitempty"`
-	ClusterOverrides map[string]NamespaceClassifierOverride `yaml:"clusterOverrides,omitempty"`
+// SegmentClassifierConfig classifies Kubernetes namespaces into segments (ops/dev).
+type SegmentClassifierConfig struct {
+	DefaultSegment   string                               `yaml:"defaultSegment,omitempty"`
+	OpsExact         []string                             `yaml:"opsExact,omitempty"`
+	OpsPrefixes      []string                             `yaml:"opsPrefixes,omitempty"`
+	OpsSuffixes      []string                             `yaml:"opsSuffixes,omitempty"`
+	ClusterOverrides map[string]SegmentClassifierOverride `yaml:"clusterOverrides,omitempty"`
 }
 
-// NamespaceClassifierOverride adds cluster-specific rules.
-type NamespaceClassifierOverride struct {
+// SegmentClassifierOverride adds cluster-specific segment classification rules.
+type SegmentClassifierOverride struct {
 	DefaultSegment string   `yaml:"defaultSegment,omitempty"`
 	OpsExact       []string `yaml:"opsExact,omitempty"`
 	OpsPrefixes    []string `yaml:"opsPrefixes,omitempty"`
@@ -196,20 +196,20 @@ type AuditConfig struct {
 
 // BackendConfig defines a backend.
 type BackendConfig struct {
-	Type                 string                  `yaml:"type"` // prometheus, jwt, web, generic
-	Endpoint             string                  `yaml:"endpoint"`
-	Namespace            string                  `yaml:"namespace,omitempty"`
-	NamespaceRouting     *NamespaceRoutingConfig `yaml:"namespaceRouting,omitempty"`
-	QueryRewrite         *QueryRewriteConfig     `yaml:"queryRewrite,omitempty"`
-	ReadinessURL         string                  `yaml:"readinessUrl,omitempty"`
-	ExternalHost         string                  `yaml:"externalHost,omitempty"`
-	ExternalPathPrefixes []string                `yaml:"externalPathPrefixes,omitempty"`
-	Headers              map[string]string       `yaml:"headers,omitempty"`
-	WebConfig            *WebConfig              `yaml:"webConfig,omitempty"` // Web-specific configuration
+	Type                 string               `yaml:"type"` // prometheus, jwt, web, generic
+	Endpoint             string               `yaml:"endpoint"`
+	Tenant               string               `yaml:"tenant,omitempty"`
+	TenantRouting        *TenantRoutingConfig `yaml:"tenantRouting,omitempty"`
+	QueryRewrite         *QueryRewriteConfig  `yaml:"queryRewrite,omitempty"`
+	ReadinessURL         string               `yaml:"readinessUrl,omitempty"`
+	ExternalHost         string               `yaml:"externalHost,omitempty"`
+	ExternalPathPrefixes []string             `yaml:"externalPathPrefixes,omitempty"`
+	Headers              map[string]string    `yaml:"headers,omitempty"`
+	WebConfig            *WebConfig           `yaml:"webConfig,omitempty"` // Web-specific configuration
 }
 
-// NamespaceRoutingConfig defines namespace routing.
-type NamespaceRoutingConfig struct {
+// TenantRoutingConfig defines tenant routing.
+type TenantRoutingConfig struct {
 	Mode      string `yaml:"mode,omitempty"`      // fixed, request
 	Parameter string `yaml:"parameter,omitempty"` // request query parameter when mode=request
 	Source    string `yaml:"source,omitempty"`    // query, body, both
@@ -256,7 +256,7 @@ func (c ClusterResolverConfig) ResolveCluster(userInfo *auth.UserInfo) string {
 	return ""
 }
 
-func (c NamespaceClassifierConfig) HasRules() bool {
+func (c SegmentClassifierConfig) HasRules() bool {
 	return strings.TrimSpace(c.DefaultSegment) != "" ||
 		len(c.OpsExact) > 0 ||
 		len(c.OpsPrefixes) > 0 ||
@@ -264,7 +264,7 @@ func (c NamespaceClassifierConfig) HasRules() bool {
 		len(c.ClusterOverrides) > 0
 }
 
-func (c NamespaceClassifierConfig) Classify(cluster, namespace string) string {
+func (c SegmentClassifierConfig) Classify(cluster, namespace string) string {
 	normalizedNamespace := normalizeNamespaceToken(namespace)
 	if normalizedNamespace == "" {
 		return strings.TrimSpace(namespace)
@@ -285,9 +285,9 @@ func (c NamespaceClassifierConfig) Classify(cluster, namespace string) string {
 	return defaultSegment
 }
 
-// OpsNamespaceExclusionPattern generates a regex pattern to exclude ops namespaces for dev users.
-// Returns empty string if no ops namespaces are configured.
-func (c NamespaceClassifierConfig) OpsNamespaceExclusionPattern(cluster string) string {
+// OpsNamespaceExclusionPattern generates a regex pattern to exclude ops-segment namespaces for dev users.
+// Returns empty string if no ops-segment namespaces are configured.
+func (c SegmentClassifierConfig) OpsNamespaceExclusionPattern(cluster string) string {
 	normalizedCluster := strings.TrimSpace(cluster)
 
 	opsExact := normalizeNamespaceList(c.OpsExact)
@@ -694,33 +694,33 @@ func validateExternalPathPrefixes(name string, backend BackendConfig) error {
 }
 
 func (c *Config) validateNamespaceRouting(name string, backend BackendConfig) error {
-	if backend.NamespaceRouting == nil || backend.NamespaceRouting.Mode == "" {
+	if backend.TenantRouting == nil || backend.TenantRouting.Mode == "" {
 		return nil
 	}
 
-	switch backend.NamespaceRouting.Mode {
+	switch backend.TenantRouting.Mode {
 	case "fixed":
-		if strings.TrimSpace(backend.Namespace) == "" {
-			return fmt.Errorf("backend '%s' namespace is required when namespaceRouting mode is fixed", name)
+		if strings.TrimSpace(backend.Tenant) == "" {
+			return fmt.Errorf("backend '%s' tenant is required when tenantRouting mode is fixed", name)
 		}
 	case "caller":
 		if !c.Authz.ClusterResolver.HasMappings() {
-			return fmt.Errorf("backend '%s' namespaceRouting mode caller requires authz.clusterResolver mappings", name)
+			return fmt.Errorf("backend '%s' tenantRouting mode caller requires authz.clusterResolver mappings", name)
 		}
 	case "request":
-		if backend.NamespaceRouting.Parameter == "" {
-			return fmt.Errorf("backend '%s' namespaceRouting parameter is required when mode is request", name)
+		if backend.TenantRouting.Parameter == "" {
+			return fmt.Errorf("backend '%s' tenantRouting parameter is required when mode is request", name)
 		}
-		switch strings.ToLower(strings.TrimSpace(backend.NamespaceRouting.Source)) {
+		switch strings.ToLower(strings.TrimSpace(backend.TenantRouting.Source)) {
 		case "", "query", "body", "both":
 		default:
-			return fmt.Errorf("backend '%s' namespaceRouting source must be one of: query, body, both", name)
+			return fmt.Errorf("backend '%s' tenantRouting source must be one of: query, body, both", name)
 		}
-		if strings.TrimSpace(backend.Namespace) != "" && !c.Authz.NamespaceClassifier.HasRules() {
-			return fmt.Errorf("backend '%s' namespace requires authz.namespaceClassifier when namespaceRouting mode is request", name)
+		if strings.TrimSpace(backend.Tenant) != "" && !c.Authz.SegmentClassifier.HasRules() {
+			return fmt.Errorf("backend '%s' tenant requires authz.segmentClassifier when tenantRouting mode is request", name)
 		}
 	default:
-		return fmt.Errorf("backend '%s' namespaceRouting mode must be one of: fixed, request, caller", name)
+		return fmt.Errorf("backend '%s' tenantRouting mode must be one of: fixed, request, caller", name)
 	}
 
 	return nil

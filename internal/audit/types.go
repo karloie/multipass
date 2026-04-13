@@ -11,7 +11,7 @@ type AuditEvent struct {
 	Timestamp            time.Time `json:"timestamp"`
 	UserID               string    `json:"user_id"`                 // Subject (sub) from JWT
 	Backend              string    `json:"backend"`                 // "loki", "mimir", "grafana", "tempo"
-	Namespace            string    `json:"namespace"`               // "dev-team-1", "prod", etc.
+	Tenant               string    `json:"tenant"`                  // "dev-team-1", "prod", etc.
 	StatusCode           int       `json:"status_code,omitempty"`   // HTTP status code
 	ElevatedAccessActive bool      `json:"elevated_access_active"`  // Was elevated access active during this action?
 	ElevatedRole         string    `json:"elevated_role,omitempty"` // Which elevated role was active
@@ -23,7 +23,7 @@ type AuditEvent struct {
 type AuditFilters struct {
 	UserID               string
 	Backend              string
-	Namespace            string
+	Tenant               string
 	ElevatedAccessActive *bool
 	From                 time.Time
 	To                   time.Time

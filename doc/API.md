@@ -4,7 +4,7 @@ Use [config.example.yaml](../config.example.yaml) as the full source of config e
 
 ## Types
 
-- `prometheus`: injects `X-Scope-OrgID`; use for namespace-aware multi-tenant APIs such as Loki, Mimir, Tempo, Prometheus, Thanos, Cortex, and VictoriaMetrics
+- `prometheus`: injects `X-Scope-OrgID`; use for tenant-aware multi-tenant APIs such as Loki, Mimir, Tempo, Prometheus, Thanos, Cortex, and VictoriaMetrics
 - `jwt`: forwards the original `Authorization: Bearer <jwt>`; use when the backend already enforces its own RBAC
 - `generic`: plain reverse proxy with optional static headers
 - `web`: forwards trusted identity headers for browser UIs
@@ -26,7 +26,7 @@ backends:
     endpoint: http://mimir:8080
     namespaceRouting:
       mode: request
-      parameter: tm_namespace
+      parameter: tm_tenant
     queryRewrite:
       tenantLabel:
         name: namespace
@@ -97,7 +97,7 @@ Rules:
 - do not expose the dashboard directly; it must only be reachable through Multipass
 - treat forwarded headers as trusted only from Multipass
 - use backend-native RBAC if you need more than edge identity propagation
-- use `type: prometheus` for namespace-aware data-plane enforcement; `type: web` is mainly for browser SSO
+- use `type: prometheus` for tenant-aware data-plane enforcement; `type: web` is mainly for browser SSO
 
 Quick debug backend:
 

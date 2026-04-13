@@ -7,19 +7,19 @@ import (
 func TestOpsNamespaceExclusionPattern(t *testing.T) {
 	tests := []struct {
 		name     string
-		config   NamespaceClassifierConfig
+		config   SegmentClassifierConfig
 		cluster  string
 		expected string
 	}{
 		{
 			name:     "no ops namespaces returns empty",
-			config:   NamespaceClassifierConfig{},
+			config:   SegmentClassifierConfig{},
 			cluster:  "",
 			expected: "",
 		},
 		{
 			name: "exact matches only",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsExact: []string{"kube-system", "monitoring", "argocd"},
 			},
 			cluster:  "",
@@ -27,7 +27,7 @@ func TestOpsNamespaceExclusionPattern(t *testing.T) {
 		},
 		{
 			name: "prefix matches only",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsPrefixes: []string{"kube-", "istio-"},
 			},
 			cluster:  "",
@@ -35,7 +35,7 @@ func TestOpsNamespaceExclusionPattern(t *testing.T) {
 		},
 		{
 			name: "suffix matches only",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsSuffixes: []string{"-system"},
 			},
 			cluster:  "",
@@ -43,7 +43,7 @@ func TestOpsNamespaceExclusionPattern(t *testing.T) {
 		},
 		{
 			name: "mixed exact, prefix, and suffix",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsExact:    []string{"monitoring", "argocd"},
 				OpsPrefixes: []string{"kube-"},
 				OpsSuffixes: []string{"-system"},
@@ -53,9 +53,9 @@ func TestOpsNamespaceExclusionPattern(t *testing.T) {
 		},
 		{
 			name: "cluster override adds to base",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsExact: []string{"monitoring"},
-				ClusterOverrides: map[string]NamespaceClassifierOverride{
+				ClusterOverrides: map[string]SegmentClassifierOverride{
 					"core-test": {
 						OpsExact: []string{"special-namespace"},
 					},
@@ -66,9 +66,9 @@ func TestOpsNamespaceExclusionPattern(t *testing.T) {
 		},
 		{
 			name: "cluster override with prefix and suffix",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsPrefixes: []string{"kube-"},
-				ClusterOverrides: map[string]NamespaceClassifierOverride{
+				ClusterOverrides: map[string]SegmentClassifierOverride{
 					"mgmt-plat": {
 						OpsExact:    []string{"argocd"},
 						OpsPrefixes: []string{"prometheus-"},
@@ -81,7 +81,7 @@ func TestOpsNamespaceExclusionPattern(t *testing.T) {
 		},
 		{
 			name: "whitespace trimming and normalization",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsExact:    []string{"  monitoring  ", "ARGOCD"},
 				OpsPrefixes: []string{" kube- "},
 			},
@@ -90,7 +90,7 @@ func TestOpsNamespaceExclusionPattern(t *testing.T) {
 		},
 		{
 			name: "empty values ignored",
-			config: NamespaceClassifierConfig{
+			config: SegmentClassifierConfig{
 				OpsExact:    []string{"monitoring", "", "argocd", "   "},
 				OpsPrefixes: []string{"", "kube-"},
 			},

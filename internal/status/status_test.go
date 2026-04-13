@@ -37,7 +37,7 @@ func (f fakePermissionEvaluator) EvaluatePermissions(_ context.Context, _ *auth.
 	return f.permission, nil
 }
 
-func (f fakePermissionEvaluator) CanAccessNamespace(_ context.Context, _ *auth.UserInfo, _ string) (bool, error) {
+func (f fakePermissionEvaluator) CanAccessTenant(_ context.Context, _ *auth.UserInfo, _ string) (bool, error) {
 	return false, nil
 }
 
@@ -170,10 +170,10 @@ func TestHandlerReportsCurrentUserGroups(t *testing.T) {
 			Name:        "Karl Example",
 		}},
 		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
-			ExternalGroups:    []string{"Rolle Utvikler", "Rolle Plattformadmin utvikling"},
-			InternalRoles:     []string{"dev", "admin"},
-			AllowedNamespaces: []string{"default", "monitoring"},
-			ElevatedRoles:     []authz.ElevatedRole{{Role: "Reader"}},
+			ExternalGroups: []string{"Rolle Utvikler", "Rolle Plattformadmin utvikling"},
+			InternalRoles:  []string{"dev", "admin"},
+			AllowedTenants: []string{"default", "monitoring"},
+			ElevatedRoles:  []authz.ElevatedRole{{Role: "Reader"}},
 		}},
 		httpClient: &http.Client{},
 	}
@@ -229,7 +229,7 @@ func TestHandlerReportsDerivedAllowedNamespaces(t *testing.T) {
 					"otel-collector-core-test": "core-test",
 				},
 			},
-			NamespaceClassifier: config.NamespaceClassifierConfig{
+			SegmentClassifier: config.SegmentClassifierConfig{
 				DefaultSegment: "dev",
 				OpsExact:       []string{"argocd"},
 			},
@@ -242,7 +242,7 @@ func TestHandlerReportsDerivedAllowedNamespaces(t *testing.T) {
 			ID: "otel-collector-core-test",
 		}},
 		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
-			AllowedNamespaces: []string{"argocd", "team-a"},
+			AllowedTenants: []string{"argocd", "team-a"},
 		}},
 		httpClient: &http.Client{},
 	}
@@ -270,7 +270,7 @@ func TestHandlerKeepsDerivedAllowedNamespacesStable(t *testing.T) {
 					"otel-collector-core-test": "core-test",
 				},
 			},
-			NamespaceClassifier: config.NamespaceClassifierConfig{
+			SegmentClassifier: config.SegmentClassifierConfig{
 				DefaultSegment: "dev",
 				OpsExact:       []string{"argocd"},
 			},
@@ -283,7 +283,7 @@ func TestHandlerKeepsDerivedAllowedNamespacesStable(t *testing.T) {
 			ID: "otel-collector-core-test",
 		}},
 		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
-			AllowedNamespaces: []string{"core-test.ops"},
+			AllowedTenants: []string{"core-test.ops"},
 		}},
 		httpClient: &http.Client{},
 	}
@@ -305,22 +305,22 @@ func TestHandlerDerivesAllowedNamespacesFromBackendCluster(t *testing.T) {
 		Authz: config.AuthzConfig{
 			Enabled:  true,
 			Provider: "token",
-			NamespaceClassifier: config.NamespaceClassifierConfig{
+			SegmentClassifier: config.SegmentClassifierConfig{
 				DefaultSegment: "dev",
 				OpsExact:       []string{"monitoring"},
 			},
 		},
 		Backends: map[string]config.BackendConfig{
 			"mimir-core-test": {
-				Namespace: "core-test",
-				NamespaceRouting: &config.NamespaceRoutingConfig{
+				Tenant: "core-test",
+				TenantRouting: &config.TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 				},
 			},
 			"mimir-tool-test": {
-				Namespace: "tool-test",
-				NamespaceRouting: &config.NamespaceRoutingConfig{
+				Tenant: "tool-test",
+				TenantRouting: &config.TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 				},
@@ -334,7 +334,7 @@ func TestHandlerDerivesAllowedNamespacesFromBackendCluster(t *testing.T) {
 			ID: "karl@example.com",
 		}},
 		authzEvaluator: fakePermissionEvaluator{permission: &authz.Permission{
-			AllowedNamespaces: []string{"monitoring"},
+			AllowedTenants: []string{"monitoring"},
 		}},
 		httpClient: &http.Client{},
 	}

@@ -155,8 +155,8 @@ func (h *Handler) currentUserStatus(r *http.Request) currentUser {
 		} else if permission != nil {
 			result.ExternalGroups = append([]string(nil), permission.ExternalGroups...)
 			result.InternalRoles = append([]string(nil), permission.InternalRoles...)
-			result.RawAllowedNamespaces = append([]string(nil), permission.AllowedNamespaces...)
-			result.AllowedNamespaces = displayAllowedNamespaces(h.config, userInfo, permission.AllowedNamespaces)
+			result.RawAllowedNamespaces = append([]string(nil), permission.AllowedTenants...)
+			result.AllowedNamespaces = displayAllowedNamespaces(h.config, userInfo, permission.AllowedTenants)
 			result.ElevatedRoles = elevatedRoleNames(permission.ElevatedRoles)
 		}
 	}
@@ -255,17 +255,17 @@ func statusResolvedClusters(cfg *config.Config, userInfo *auth.UserInfo) []strin
 }
 
 func statusRequestRoutedBackendClusters(cfg *config.Config) []string {
-	if cfg == nil || !cfg.Authz.NamespaceClassifier.HasRules() {
+	if cfg == nil || !cfg.Authz.SegmentClassifier.HasRules() {
 		return nil
 	}
 
 	clusters := make(map[string]struct{})
 	for _, backend := range cfg.Backends {
-		if backend.NamespaceRouting == nil || !strings.EqualFold(strings.TrimSpace(backend.NamespaceRouting.Mode), "request") {
+		if backend.TenantRouting == nil || !strings.EqualFold(strings.TrimSpace(backend.TenantRouting.Mode), "request") {
 			continue
 		}
 
-		cluster := strings.TrimSpace(backend.Namespace)
+		cluster := strings.TrimSpace(backend.Tenant)
 		if cluster == "" {
 			continue
 		}

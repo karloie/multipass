@@ -27,13 +27,13 @@ type Provider interface {
 
 type Evaluator interface {
 	EvaluatePermissions(ctx context.Context, userInfo *auth.UserInfo) (*Permission, error)
-	CanAccessNamespace(ctx context.Context, userInfo *auth.UserInfo, namespace string) (bool, error)
+	CanAccessTenant(ctx context.Context, userInfo *auth.UserInfo, tenant string) (bool, error)
 }
 
 type Permission struct {
-	UserID            string
-	ExternalGroups    []string
-	InternalRoles     []string
-	ElevatedRoles     []ElevatedRole
-	AllowedNamespaces []string
+	UserID         string
+	ExternalGroups []string
+	InternalRoles  []string
+	ElevatedRoles  []ElevatedRole
+	AllowedTenants []string
 }

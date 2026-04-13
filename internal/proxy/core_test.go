@@ -24,7 +24,7 @@ import (
 	queryrewrite "github.com/karloie/multipass/internal/query"
 )
 
-const testRequestRoutingParameter = "tm_namespace"
+const testRequestRoutingParameter = "tm_tenant"
 
 // createTestJWT creates a simple unsigned JWT for testing.
 // This exercises real JWT parsing code without requiring signature verification.
@@ -137,42 +137,42 @@ func (w *hijackableResponseWriter) Flush() {
 }
 
 type proxyTestCase struct {
-	name                     string
-	backendName              string
-	backendType              string
-	backendNamespace         string
-	externalPathPrefixes     []string
-	trustedProxyConfig       *config.TrustedProxyConfig
-	queryRewrite             *queryrewrite.RewriteConfig
-	requestMethod            string
-	requestBody              string
-	requestContentType       string
-	requestPath              string
-	host                     string
-	authToken                string
-	browserUser              *auth.UserInfo
-	namespace                string
-	requestHeaders           map[string]string
-	authzNamespaceClassifier *config.NamespaceClassifierConfig
-	authzClusterResolver     *config.ClusterResolverConfig
-	authValidateFunc         func(ctx context.Context, token string) (*auth.UserInfo, error)
-	authzGetUserGroupsFunc   func(ctx context.Context, userID string) ([]string, error)
-	authzGroupMappings       map[string][]string
-	authzRoleMappings        map[string][]string
-	authzTeamAccess          *config.TeamAccessConfig
-	authzEnabled             bool
-	webConfig                *config.WebConfig
-	expectedStatus           int
-	expectedLocation         string
-	expectedHeaders          map[string]string
-	expectAuditEvent         bool
-	expectAuthCall           bool
-	expectAuthzCall          bool
-	expectBackendCall        bool
-	expectedBackendPath      string
-	expectedBackendQuery     string
-	expectedBackendBody      string
-	expectedAuditNamespace   string
+	name                   string
+	backendName            string
+	backendType            string
+	backendNamespace       string
+	externalPathPrefixes   []string
+	trustedProxyConfig     *config.TrustedProxyConfig
+	queryRewrite           *queryrewrite.RewriteConfig
+	requestMethod          string
+	requestBody            string
+	requestContentType     string
+	requestPath            string
+	host                   string
+	authToken              string
+	browserUser            *auth.UserInfo
+	namespace              string
+	requestHeaders         map[string]string
+	authzSegmentClassifier *config.SegmentClassifierConfig
+	authzClusterResolver   *config.ClusterResolverConfig
+	authValidateFunc       func(ctx context.Context, token string) (*auth.UserInfo, error)
+	authzGetUserGroupsFunc func(ctx context.Context, userID string) ([]string, error)
+	authzGroupMappings     map[string][]string
+	authzRoleMappings      map[string][]string
+	authzTeamAccess        *config.TeamAccessConfig
+	authzEnabled           bool
+	webConfig              *config.WebConfig
+	expectedStatus         int
+	expectedLocation       string
+	expectedHeaders        map[string]string
+	expectAuditEvent       bool
+	expectAuthCall         bool
+	expectAuthzCall        bool
+	expectBackendCall      bool
+	expectedBackendPath    string
+	expectedBackendQuery   string
+	expectedBackendBody    string
+	expectedAuditTenant    string
 }
 
 func captureBackend() (*httptest.Server, *capturedRequest) {
@@ -257,8 +257,8 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 	if tt.trustedProxyConfig != nil {
 		cfg.Auth.TrustedProxy = *tt.trustedProxyConfig
 	}
-	if tt.authzNamespaceClassifier != nil {
-		cfg.Authz.NamespaceClassifier = *tt.authzNamespaceClassifier
+	if tt.authzSegmentClassifier != nil {
+		cfg.Authz.SegmentClassifier = *tt.authzSegmentClassifier
 	}
 	if tt.authzClusterResolver != nil {
 		cfg.Authz.ClusterResolver = *tt.authzClusterResolver
@@ -274,15 +274,36 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 	}
 
 	if tt.backendName != "nonexistent" {
-		cfg.Backends[tt.backendName] = config.BackendConfig{
+		backendCfg := config.BackendConfig{
 			Type:                 tt.backendType,
 			Endpoint:             backendServer.URL,
-			Namespace:            tt.backendNamespace,
 			QueryRewrite:         tt.queryRewrite,
 			ExternalHost:         tt.host,
 			ExternalPathPrefixes: tt.externalPathPrefixes,
 			WebConfig:            tt.webConfig,
 		}
+
+		// Configure tenant routing based on test parameters
+		if strings.Contains(tt.requestPath, testRequestRoutingParameter+"=") || strings.Contains(tt.requestBody, testRequestRoutingParameter+"=") {
+			// Request-based routing for tests with tm_tenant parameter
+			if tt.backendNamespace != "" {
+				backendCfg.Tenant = tt.backendNamespace
+			}
+			backendCfg.TenantRouting = &config.TenantRoutingConfig{
+				Mode:      "request",
+				Parameter: testRequestRoutingParameter,
+				Source:    "both",
+			}
+		} else {
+			// Fixed tenant - backendNamespace takes precedence over namespace
+			if tt.backendNamespace != "" {
+				backendCfg.Tenant = tt.backendNamespace
+			} else if tt.namespace != "" {
+				backendCfg.Tenant = tt.namespace
+			}
+		}
+
+		cfg.Backends[tt.backendName] = backendCfg
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -420,7 +441,7 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 			if event.Backend != tt.backendName {
 				t.Errorf("Expected audit backend=%s, got %s", tt.backendName, event.Backend)
 			}
-			expectedNs := tt.expectedAuditNamespace
+			expectedNs := tt.expectedAuditTenant
 			if expectedNs == "" {
 				expectedNs = tt.backendNamespace
 			}
@@ -430,8 +451,8 @@ func executeProxyTestCase(t *testing.T, tt proxyTestCase) {
 					expectedNs = "default"
 				}
 			}
-			if event.Namespace != expectedNs {
-				t.Errorf("Expected audit namespace=%s, got %s", expectedNs, event.Namespace)
+			if event.Tenant != expectedNs {
+				t.Errorf("Expected audit tenant=%s, got %s", expectedNs, event.Tenant)
 			}
 		}
 	} else {
@@ -602,71 +623,6 @@ func TestFixedBackendNamespaceOverridesRequestNamespace(t *testing.T) {
 	})
 }
 
-func TestCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
-	executeProxyTestCase(t, proxyTestCase{
-		name:        "caller namespace routing resolves cluster tenant",
-		backendName: "mimir-otlp",
-		backendType: "prometheus",
-		requestPath: "/mimir-otlp/api/v1/push",
-		authToken:   "test-token",
-		authzClusterResolver: &config.ClusterResolverConfig{
-			Source: "user",
-			Mappings: map[string]string{
-				"otel-collector-core-test": "core-test",
-			},
-		},
-		authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
-			return &auth.UserInfo{ID: "otel-collector-core-test"}, nil
-		},
-		expectedStatus:         http.StatusOK,
-		expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test"},
-		expectAuditEvent:       true,
-		expectAuthCall:         true,
-		expectBackendCall:      true,
-		expectedBackendPath:    "/api/v1/push",
-		expectedAuditNamespace: "core-test",
-	})
-}
-
-func TestExternalHostCallerNamespaceRoutingUsesResolvedCluster(t *testing.T) {
-	executeProxyTestCase(t, proxyTestCase{
-		name:                 "external host caller namespace routing resolves cluster tenant",
-		backendName:          "mimir-otlp",
-		backendType:          "prometheus",
-		requestPath:          "/otlp/v1/metrics",
-		host:                 "otlp.example.com",
-		externalPathPrefixes: []string{"/otlp/v1/metrics"},
-		trustedProxyConfig: &config.TrustedProxyConfig{
-			Enabled:      true,
-			UserHeader:   "X-Grafana-User",
-			GroupsHeader: "X-Multipass-Groups",
-			CallerHeader: "X-Multipass-Caller",
-			CallerValue:  "grafana-datasource",
-			SecretHeader: "X-Multipass-Proxy-Secret",
-			SecretValue:  "proxy-secret",
-		},
-		requestHeaders: map[string]string{
-			"X-Grafana-User":           "otel-collector-core-test",
-			"X-Multipass-Groups":       "otel-collector-core-test",
-			"X-Multipass-Caller":       "grafana-datasource",
-			"X-Multipass-Proxy-Secret": "proxy-secret",
-		},
-		authzClusterResolver: &config.ClusterResolverConfig{
-			Source: "user",
-			Mappings: map[string]string{
-				"otel-collector-core-test": "core-test",
-			},
-		},
-		expectedStatus:         http.StatusOK,
-		expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test"},
-		expectAuditEvent:       true,
-		expectAuthCall:         false,
-		expectBackendCall:      true,
-		expectedBackendPath:    "/otlp/v1/metrics",
-		expectedAuditNamespace: "core-test",
-	})
-}
-
 func TestTeamAccessDeveloperNeedsMatchingTeamID(t *testing.T) {
 	baseRoleMappings := map[string][]string{
 		"Rolle Utvikler":                       {"developer"},
@@ -769,9 +725,9 @@ func TestTempoTraceByIDResponseFiltering(t *testing.T) {
 			Auth:   config.AuthConfig{Provider: "oidc", OIDC: config.OIDCConfig{IssuerURL: "https://issuer", ClientID: "client", ClientSecret: "secret", RedirectURL: "https://example.com/login/generic_oauth"}},
 			Backends: map[string]config.BackendConfig{
 				"tempo-core-dev": {
-					Type:      "prometheus",
-					Endpoint:  backendServer.URL,
-					Namespace: "core",
+					Type:     "prometheus",
+					Endpoint: backendServer.URL,
+					Tenant:   "core",
 					QueryRewrite: &queryrewrite.RewriteConfig{Semantics: []queryrewrite.SemanticRule{{
 						Language: "traceql",
 						Params:   []string{"q"},

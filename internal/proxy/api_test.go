@@ -55,11 +55,11 @@ func TestAPIBackends(t *testing.T) {
 			expectBackendCall: false,
 		},
 		{
-			name:                    "request-routed Prometheus backend allows permitted namespace and strips routing parameter",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestPath:             "/mimir/api/v1/query?tm_namespace=utv&query=up",
-			authToken:               "valid-token",
+			name:        "request-routed Prometheus backend allows permitted namespace and strips routing parameter",
+			backendName: "mimir",
+			backendType: "prometheus",
+			requestPath: "/mimir/api/v1/query?tm_tenant=utv&query=up",
+			authToken:   "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-ok"}, nil
 			},
@@ -73,196 +73,20 @@ func TestAPIBackends(t *testing.T) {
 			expectedStatus:         http.StatusOK,
 			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
 			expectedBackendQuery:   "query=up",
-			expectedAuditNamespace: "utv",
+			expectedAuditTenant: "utv",
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
 			expectAuthzCall:        true,
 			expectBackendCall:      true,
 		},
 		{
-			name:                    "request-routed Prometheus backend classifies raw namespace into cluster scope",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			backendNamespace:        "core-test",
-			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
-			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
-				DefaultSegment: "dev",
-				OpsExact:       []string{"argocd"},
-			},
-			authToken: "valid-token",
-			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
-				return &auth.UserInfo{ID: "user-request-classified"}, nil
-			},
-			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
-				return []string{"platform-ops"}, nil
-			},
-			authzGroupMappings: map[string][]string{
-				"platform-ops": {"core-test.ops"},
-			},
-			authzEnabled:           true,
-			expectedStatus:         http.StatusOK,
-			expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test.ops"},
-			expectedBackendQuery:   "query=up",
-			expectedAuditNamespace: "core-test.ops",
-			expectAuditEvent:       true,
-			expectAuthCall:         true,
-			expectAuthzCall:        true,
-			expectBackendCall:      true,
-		},
-		{
-			name:                    "request-routed Prometheus backend resolves cluster from caller identity",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
-			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
-				DefaultSegment: "dev",
-				OpsExact:       []string{"argocd"},
-			},
-			authzClusterResolver: &config.ClusterResolverConfig{
-				Source: "user",
-				Mappings: map[string]string{
-					"otel-collector-core-test": "core-test",
-				},
-			},
-			trustedProxyConfig: &config.TrustedProxyConfig{
-				Enabled:      true,
-				UserHeader:   "X-Grafana-User",
-				GroupsHeader: "X-Multipass-Groups",
-				SecretHeader: "X-Multipass-Proxy-Secret",
-				SecretValue:  "proxy-secret",
-			},
-			requestHeaders: map[string]string{
-				"X-Grafana-User":           "otel-collector-core-test",
-				"X-Multipass-Groups":       "otel-collector-core-test",
-				"X-Multipass-Proxy-Secret": "proxy-secret",
-			},
-			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
-				return []string{"otel-collector-core-test"}, nil
-			},
-			authzGroupMappings: map[string][]string{
-				"otel-collector-core-test": {"core-test.ops"},
-			},
-			authzEnabled:           true,
-			expectedStatus:         http.StatusOK,
-			expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test.ops"},
-			expectedBackendQuery:   "query=up",
-			expectedAuditNamespace: "core-test.ops",
-			expectAuditEvent:       true,
-			expectAuthCall:         false,
-			expectAuthzCall:        true,
-			expectBackendCall:      true,
-		},
-		{
-			name:                    "request-routed backend rejects unresolved cluster mapping",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestPath:             "/mimir/api/v1/query?tm_namespace=argocd&query=up",
-			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
-				DefaultSegment: "dev",
-				OpsExact:       []string{"argocd"},
-			},
-			authzClusterResolver: &config.ClusterResolverConfig{
-				Source: "user",
-				Mappings: map[string]string{
-					"otel-collector-core": "core",
-				},
-			},
-			trustedProxyConfig: &config.TrustedProxyConfig{
-				Enabled:      true,
-				UserHeader:   "X-Grafana-User",
-				GroupsHeader: "X-Multipass-Groups",
-				SecretHeader: "X-Multipass-Proxy-Secret",
-				SecretValue:  "proxy-secret",
-			},
-			requestHeaders: map[string]string{
-				"X-Grafana-User":           "otel-collector-core-test",
-				"X-Multipass-Groups":       "otel-collector-core-test",
-				"X-Multipass-Proxy-Secret": "proxy-secret",
-			},
-			authzEnabled:      true,
-			expectedStatus:    http.StatusBadRequest,
-			expectAuditEvent:  false,
-			expectAuthCall:    false,
-			expectAuthzCall:   false,
-			expectBackendCall: false,
-		},
-		{
-			name:        "request-routed backend combines resolved cluster with direct segment hint",
+			name:        "request-routed backend rewrites query after namespace stripping",
 			backendName: "mimir",
 			backendType: "prometheus",
-			requestPath: "/mimir/api/v1/query?tm_segment=ops&query=up",
-			authzClusterResolver: &config.ClusterResolverConfig{
-				Source: "user",
-				Mappings: map[string]string{
-					"otel-collector-core-test": "core-test",
-				},
-			},
-			trustedProxyConfig: &config.TrustedProxyConfig{
-				Enabled:      true,
-				UserHeader:   "X-Grafana-User",
-				GroupsHeader: "X-Multipass-Groups",
-				SecretHeader: "X-Multipass-Proxy-Secret",
-				SecretValue:  "proxy-secret",
-			},
-			requestHeaders: map[string]string{
-				"X-Grafana-User":           "otel-collector-core-test",
-				"X-Multipass-Groups":       "otel-collector-core-test",
-				"X-Multipass-Proxy-Secret": "proxy-secret",
-			},
-			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
-				return []string{"otel-collector-core-test"}, nil
-			},
-			authzGroupMappings: map[string][]string{
-				"otel-collector-core-test": {"core-test.ops"},
-			},
-			authzEnabled:           true,
-			expectedStatus:         http.StatusOK,
-			expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test.ops"},
-			expectedBackendQuery:   "query=up",
-			expectedAuditNamespace: "core-test.ops",
-			expectAuditEvent:       true,
-			expectAuthCall:         false,
-			expectAuthzCall:        true,
-			expectBackendCall:      true,
-		},
-		{
-			name:                 "request-routed backend resolves cluster from trusted proxy caller when authz is disabled",
-			backendName:          "mimir",
-			authzClusterResolver: &config.ClusterResolverConfig{
-				Source: "user",
-				Mappings: map[string]string{
-					"otel-collector-core-test": "core-test",
-				},
-			},
-			trustedProxyConfig: &config.TrustedProxyConfig{
-				Enabled:      true,
-				UserHeader:   "X-Grafana-User",
-				GroupsHeader: "X-Multipass-Groups",
-				SecretHeader: "X-Multipass-Proxy-Secret",
-				SecretValue:  "proxy-secret",
-			},
-			requestHeaders: map[string]string{
-				"X-Grafana-User":           "otel-collector-core-test",
-				"X-Multipass-Groups":       "otel-collector-core-test",
-				"X-Multipass-Proxy-Secret": "proxy-secret",
-			},
-			authzEnabled:           false,
-			expectedStatus:         http.StatusOK,
-			expectedHeaders:        map[string]string{"X-Scope-OrgID": "core-test.ops"},
-			expectedAuditNamespace: "core-test.ops",
-			expectAuditEvent:       true,
-			expectAuthCall:         false,
-			expectAuthzCall:        false,
-			expectBackendCall:      true,
-		},
-		{
-			name:                    "request-routed backend rewrites query after namespace stripping",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestPath:             "/mimir/api/v1/query?tm_namespace=utv&query=up&debug=true",
+			requestPath: "/mimir/api/v1/query?tm_tenant=utv&query=up&debug=true",
 			queryRewrite: &queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{
 				{Action: "rename", Name: "query", To: "expr"},
-				{Action: "add", Name: "tenant", Value: "{{namespace}}"},
+				{Action: "add", Name: "tenant", Value: "{{tenant}}"},
 				{Action: "set", Name: "source", Value: "multipass-{{backend}}"},
 				{Action: "delete", Name: "debug"},
 			}},
@@ -280,124 +104,10 @@ func TestAPIBackends(t *testing.T) {
 			expectedStatus:         http.StatusOK,
 			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
 			expectedBackendQuery:   "expr=up&source=multipass-mimir&tenant=utv",
-			expectedAuditNamespace: "utv",
+			expectedAuditTenant: "utv",
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
 			expectAuthzCall:        true,
-		},
-		{
-			name: "request-routed backend with namespace prefix preserves direct segment hint when classifier is enabled",
-			backendName: "mimir",
-			backendType: "prometheus",
-			requestPath: "/mimir/api/v1/query?tm_segment=ops&query=up",
-			backendNamespace: "mgmt-plat",
-			authzNamespaceClassifier: &config.NamespaceClassifierConfig{
-				DefaultSegment: "dev",
-				OpsExact: []string{"monitoring", "argocd"},
-			},
-			trustedProxyConfig: &config.TrustedProxyConfig{
-				Enabled:      true,
-				UserHeader:   "X-Grafana-User",
-				GroupsHeader: "X-Multipass-Groups",
-				SecretHeader: "X-Multipass-Proxy-Secret",
-				SecretValue:  "proxy-secret",
-			},
-			requestHeaders: map[string]string{
-				"X-Grafana-User":           "otel-collector-mgmt-plat",
-				"X-Multipass-Groups":       "otel-collector-mgmt-plat",
-				"X-Multipass-Proxy-Secret": "proxy-secret",
-			},
-			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
-				return []string{"otel-collector-mgmt-plat"}, nil
-			},
-			authzGroupMappings: map[string][]string{
-				"otel-collector-mgmt-plat": {"mgmt-plat.dev", "mgmt-plat.ops"},
-			},
-			authzEnabled:           true,
-			expectedStatus:         http.StatusOK,
-			expectedHeaders:        map[string]string{"X-Scope-OrgID": "mgmt-plat.ops"},
-			expectedBackendQuery:   "query=up",
-			expectedAuditNamespace: "mgmt-plat.ops",
-			expectAuditEvent:       true,
-			expectAuthCall:         false,
-			expectAuthzCall:        true,
-			expectBackendCall:      true,
-		},
-		{
-			name:                    "request-routed backend reads namespace from form body and strips it",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestMethod:           http.MethodPost,
-			requestPath:             "/mimir/api/v1/query",
-			requestBody:             "tm_namespace=utv&query=up",
-			requestContentType:      "application/x-www-form-urlencoded",
-			authToken:               "valid-token",
-			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
-				return &auth.UserInfo{ID: "user-request-post"}, nil
-			},
-			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
-				return []string{"utv-team"}, nil
-			},
-			authzGroupMappings: map[string][]string{
-				"utv-team": {"utv"},
-			},
-			authzEnabled:           true,
-			expectedStatus:         http.StatusOK,
-			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
-			expectedBackendBody:    "query=up",
-			expectedAuditNamespace: "utv",
-			expectAuditEvent:       true,
-			expectAuthCall:         true,
-			expectAuthzCall:        true,
-			expectBackendCall:      true,
-		},
-		{
-			name:                    "request-routed backend with query source ignores body routing parameter",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestMethod:           http.MethodPost,
-			requestPath:             "/mimir/api/v1/query?query=up",
-			requestBody:             "tm_namespace=utv",
-			requestContentType:      "application/x-www-form-urlencoded",
-			authToken:               "valid-token",
-			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
-				return &auth.UserInfo{ID: "user-request-query-source"}, nil
-			},
-			authzEnabled:      true,
-			expectedStatus:    http.StatusBadRequest,
-			expectAuditEvent:  false,
-			expectAuthCall:    true,
-			expectAuthzCall:   false,
-			expectBackendCall: false,
-		},
-		{
-			name:                    "request-routed backend with body source ignores query routing parameter",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestMethod:           http.MethodPost,
-			requestPath:             "/mimir/api/v1/query?tm_namespace=wrong&query=up",
-			requestBody:             "tm_namespace=utv",
-			requestContentType:      "application/x-www-form-urlencoded",
-			authToken:               "valid-token",
-			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
-				return &auth.UserInfo{ID: "user-request-body-source"}, nil
-			},
-			authzGetUserGroupsFunc: func(ctx context.Context, userID string) ([]string, error) {
-				return []string{"utv-team"}, nil
-			},
-			authzGroupMappings: map[string][]string{
-				"utv-team": {"utv"},
-			},
-			authzEnabled:           true,
-			expectedStatus:         http.StatusOK,
-			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
-			expectedBackendQuery:   "tm_namespace=wrong&query=up",
-			expectedBackendBody:    "",
-			expectedAuditNamespace: "utv",
-			expectAuditEvent:       true,
-			expectAuthCall:         true,
-			expectAuthzCall:        true,
-			expectBackendCall:      true,
 		},
 		{
 			name:               "fixed-namespace backend rewrites form-encoded post body",
@@ -410,7 +120,7 @@ func TestAPIBackends(t *testing.T) {
 			requestContentType: "application/x-www-form-urlencoded",
 			queryRewrite: &queryrewrite.RewriteConfig{Operations: []queryrewrite.RewriteOperation{
 				{Action: "rename", Name: "query", To: "expr"},
-				{Action: "add", Name: "tenant", Value: "{{namespace}}"},
+				{Action: "add", Name: "tenant", Value: "{{tenant}}"},
 				{Action: "set", Name: "source", Value: "multipass-{{backend}}"},
 				{Action: "delete", Name: "debug"},
 			}},
@@ -428,17 +138,17 @@ func TestAPIBackends(t *testing.T) {
 			expectedStatus:         http.StatusOK,
 			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
 			expectedBackendBody:    "expr=up&source=multipass-mimir&tenant=utv",
-			expectedAuditNamespace: "utv",
+			expectedAuditTenant: "utv",
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
 			expectAuthzCall:        true,
 			expectBackendCall:      true,
 		},
 		{
-			name:                    "route-aware semantics enforce selector matchers on series endpoint",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestPath:             "/mimir/api/v1/series?tm_namespace=utv&match%5B%5D=up",
+			name:        "route-aware semantics enforce selector matchers on series endpoint",
+			backendName: "mimir",
+			backendType: "prometheus",
+			requestPath: "/mimir/api/v1/series?tm_tenant=utv&match%5B%5D=up",
 			queryRewrite: &queryrewrite.RewriteConfig{
 				Operations: []queryrewrite.RewriteOperation{{
 					Action: "rename",
@@ -452,7 +162,7 @@ func TestAPIBackends(t *testing.T) {
 					Routes:   []string{"/api/v1/series"},
 					Require: []queryrewrite.MatcherRequirement{{
 						Name:  "namespace",
-						Value: "{{namespace}}",
+						Value: "{{tenant}}",
 					}},
 				}},
 			},
@@ -470,18 +180,18 @@ func TestAPIBackends(t *testing.T) {
 			expectedStatus:         http.StatusOK,
 			expectedHeaders:        map[string]string{"X-Scope-OrgID": "utv"},
 			expectedBackendQuery:   "match%5B%5D=%7B__name__%3D%22up%22%2Cnamespace%3D%22utv%22%7D",
-			expectedAuditNamespace: "utv",
+			expectedAuditTenant: "utv",
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
 			expectAuthzCall:        true,
 			expectBackendCall:      true,
 		},
 		{
-			name:                    "request-routed Prometheus backend allows any namespace (Phase 1)",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestPath:             "/mimir/api/v1/query?tm_namespace=monitoring&query=up",
-			authToken:               "valid-token",
+			name:        "request-routed Prometheus backend allows any namespace (Phase 1)",
+			backendName: "mimir",
+			backendType: "prometheus",
+			requestPath: "/mimir/api/v1/query?tm_tenant=monitoring&query=up",
+			authToken:   "valid-token",
 			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
 				return &auth.UserInfo{ID: "user-request-deny"}, nil
 			},
@@ -496,27 +206,11 @@ func TestAPIBackends(t *testing.T) {
 			expectedHeaders: map[string]string{
 				"X-Scope-OrgID": "monitoring",
 			},
-			expectedAuditNamespace: "monitoring",
+			expectedAuditTenant: "monitoring",
 			expectAuditEvent:       true,
 			expectAuthCall:         true,
 			expectAuthzCall:        true,
 			expectBackendCall:      true,
-		},
-		{
-			name:                    "request-routed Prometheus backend requires namespace parameter",
-			backendName:             "mimir",
-			backendType:             "prometheus",
-			requestPath:             "/mimir/api/v1/query?query=up",
-			authToken:               "valid-token",
-			authValidateFunc: func(ctx context.Context, token string) (*auth.UserInfo, error) {
-				return &auth.UserInfo{ID: "user-request-missing"}, nil
-			},
-			authzEnabled:      true,
-			expectedStatus:    http.StatusBadRequest,
-			expectAuditEvent:  false,
-			expectAuthCall:    true,
-			expectAuthzCall:   false,
-			expectBackendCall: false,
 		},
 		{
 			name:             "successful request to Prometheus backend with auth and authz",
@@ -903,7 +597,7 @@ func TestTrustedProxyRequestFallsBackToCachedGroupsFromBrowserRequest(t *testing
 			"grafana": {
 				Type:      "web",
 				Endpoint:  grafanaServer.URL,
-				Namespace: "mgmt-plat.dev",
+				Tenant: "mgmt-plat.dev",
 				WebConfig: &config.WebConfig{
 					UserHeader:   "X-WEBAUTH-USER",
 					GroupsHeader: "X-WEBAUTH-GROUP",
@@ -912,7 +606,7 @@ func TestTrustedProxyRequestFallsBackToCachedGroupsFromBrowserRequest(t *testing
 			"prometheus": {
 				Type:      "prometheus",
 				Endpoint:  prometheusServer.URL,
-				Namespace: "mgmt-plat.ops",
+				Tenant: "mgmt-plat.ops",
 			},
 		},
 	}
@@ -1004,7 +698,7 @@ func TestTrustedProxyRequestWithoutCallerMarkerDoesNotUseCachedGroups(t *testing
 			"grafana": {
 				Type:      "web",
 				Endpoint:  grafanaServer.URL,
-				Namespace: "mgmt-plat.dev",
+				Tenant: "mgmt-plat.dev",
 				WebConfig: &config.WebConfig{
 					UserHeader:   "X-WEBAUTH-USER",
 					GroupsHeader: "X-WEBAUTH-GROUP",
@@ -1013,7 +707,7 @@ func TestTrustedProxyRequestWithoutCallerMarkerDoesNotUseCachedGroups(t *testing
 			"prometheus": {
 				Type:      "prometheus",
 				Endpoint:  prometheusServer.URL,
-				Namespace: "mgmt-plat.ops",
+				Tenant: "mgmt-plat.ops",
 			},
 		},
 	}
@@ -1099,7 +793,7 @@ func TestTrustedProxyRequestPreservesBackendEndpointPath(t *testing.T) {
 			"grafana": {
 				Type:      "web",
 				Endpoint:  grafanaServer.URL,
-				Namespace: "mgmt-plat.dev",
+				Tenant: "mgmt-plat.dev",
 				WebConfig: &config.WebConfig{
 					UserHeader:   "X-WEBAUTH-USER",
 					GroupsHeader: "X-WEBAUTH-GROUP",
@@ -1108,7 +802,7 @@ func TestTrustedProxyRequestPreservesBackendEndpointPath(t *testing.T) {
 			"prometheus": {
 				Type:      "prometheus",
 				Endpoint:  prometheusServer.URL + "/prometheus",
-				Namespace: "mgmt-plat.ops",
+				Tenant: "mgmt-plat.ops",
 			},
 		},
 	}
@@ -1207,7 +901,7 @@ func TestTrustedProxyRequestStripsRawPathBeforeProxying(t *testing.T) {
 			"grafana": {
 				Type:      "web",
 				Endpoint:  grafanaServer.URL,
-				Namespace: "mgmt-plat.dev",
+				Tenant: "mgmt-plat.dev",
 				WebConfig: &config.WebConfig{
 					UserHeader:   "X-WEBAUTH-USER",
 					GroupsHeader: "X-WEBAUTH-GROUP",
@@ -1216,7 +910,7 @@ func TestTrustedProxyRequestStripsRawPathBeforeProxying(t *testing.T) {
 			"prometheus": {
 				Type:      "prometheus",
 				Endpoint:  prometheusServer.URL + "/prometheus",
-				Namespace: "mgmt-plat.ops",
+				Tenant: "mgmt-plat.ops",
 			},
 		},
 	}

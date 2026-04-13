@@ -58,11 +58,11 @@ func TestPolicyEvaluatorCachesPermissions(t *testing.T) {
 	}
 	// When PIM elevated roles are active, they COMPLETELY replace other permissions
 	// So only the prod-admin role's namespace (prod) is granted, not team-platform's (dev, test)
-	if len(permission.AllowedNamespaces) != 1 {
-		t.Fatalf("unexpected namespace count: got %d want 1 (PIM overrides all)", len(permission.AllowedNamespaces))
+	if len(permission.AllowedTenants) != 1 {
+		t.Fatalf("unexpected tenant count: got %d want 1 (PIM overrides all)", len(permission.AllowedTenants))
 	}
-	if permission.AllowedNamespaces[0] != "prod" {
-		t.Fatalf("expected PIM role namespace 'prod', got %v", permission.AllowedNamespaces)
+	if permission.AllowedTenants[0] != "prod" {
+		t.Fatalf("expected PIM role tenant 'prod', got %v", permission.AllowedTenants)
 	}
 }
 
@@ -128,12 +128,12 @@ func TestPolicyEvaluatorResolvesInternalRolesFromExternalGroups(t *testing.T) {
 	}
 
 	wantNamespaces := []string{"team-a.dev", "team-a.readonly", "team-a.test"}
-	if len(permission.AllowedNamespaces) != len(wantNamespaces) {
-		t.Fatalf("unexpected namespace count: got %d want %d (%v)", len(permission.AllowedNamespaces), len(wantNamespaces), permission.AllowedNamespaces)
+	if len(permission.AllowedTenants) != len(wantNamespaces) {
+		t.Fatalf("unexpected tenant count: got %d want %d (%v)", len(permission.AllowedTenants), len(wantNamespaces), permission.AllowedTenants)
 	}
 	for index, namespace := range wantNamespaces {
-		if permission.AllowedNamespaces[index] != namespace {
-			t.Fatalf("unexpected namespace at %d: got %q want %q", index, permission.AllowedNamespaces[index], namespace)
+		if permission.AllowedTenants[index] != namespace {
+			t.Fatalf("unexpected tenant at %d: got %q want %q", index, permission.AllowedTenants[index], namespace)
 		}
 	}
 }
@@ -153,7 +153,7 @@ func TestNamespacesAllowed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := namespacesAllowed(tt.allowed, tt.namespace); got != tt.want {
+			if got := tenantsAllowed(tt.allowed, tt.namespace); got != tt.want {
 				t.Fatalf("unexpected access result: got %v want %v", got, tt.want)
 			}
 		})

@@ -21,10 +21,6 @@ const (
 	semanticLanguageLogQL    = "logql"
 	semanticLanguageTraceQL  = "traceql"
 
-	tenantLabelDefaultName  = "namespace"
-	tenantLabelDefaultValue = "{{namespace}}"
-	tenantLabelModeDefault  = "validate-or-append"
-
 	semanticLanguageConstraint = "promql, selector, logql, traceql"
 )
 
@@ -36,18 +32,17 @@ var (
 )
 
 type Context struct {
-	Backend   string
-	Namespace string
-	Host      string
-	Route     string
-	Method    string
-	Segment   string // User segment: dev, ops, admin
+	Backend string
+	Tenant  string
+	Host    string
+	Route   string
+	Method  string
+	Segment string // User segment: dev, ops, admin
 }
 
 type RewriteConfig struct {
-	Operations  []RewriteOperation `yaml:"operations,omitempty"`
-	Semantics   []SemanticRule     `yaml:"semantics,omitempty"`
-	TenantLabel *TenantLabelRule   `yaml:"tenantLabel,omitempty"`
+	Operations []RewriteOperation `yaml:"operations,omitempty"`
+	Semantics  []SemanticRule     `yaml:"semantics,omitempty"`
 }
 
 type RewriteOperation struct {
@@ -65,24 +60,15 @@ type SemanticRule struct {
 	Require  []MatcherRequirement `yaml:"require,omitempty"`
 }
 
-type TenantLabelRule struct {
-	Name           string   `yaml:"name,omitempty"`
-	Value          string   `yaml:"value,omitempty"`
-	Mode           string   `yaml:"mode,omitempty"`
-	PromQLParams   []string `yaml:"promqlParams,omitempty"`
-	PromQLRoutes   []string `yaml:"promqlRoutes,omitempty"`
-	SelectorParams []string `yaml:"selectorParams,omitempty"`
-	SelectorRoutes []string `yaml:"selectorRoutes,omitempty"`
-}
-
 type MatcherRequirement struct {
-	Name     string `yaml:"name,omitempty"`
-	Value    string `yaml:"value,omitempty"`
-	Operator string `yaml:"operator,omitempty"`
+	Name      string `yaml:"name,omitempty"`
+	Value     string `yaml:"value,omitempty"`
+	Operator  string `yaml:"operator,omitempty"`
+	Condition string `yaml:"condition,omitempty"` // Conditional injection: "segment == dev", "segment != admin"
 }
 
 func HasRules(cfg *RewriteConfig) bool {
-	return cfg != nil && (len(cfg.Operations) > 0 || len(cfg.Semantics) > 0 || cfg.TenantLabel != nil)
+	return cfg != nil && (len(cfg.Operations) > 0 || len(cfg.Semantics) > 0)
 }
 
 func Validate(backendName string, cfg *RewriteConfig) error {
@@ -90,7 +76,7 @@ func Validate(backendName string, cfg *RewriteConfig) error {
 		return nil
 	}
 	if !HasRules(cfg) {
-		return fmt.Errorf("backend '%s' queryRewrite requires at least one operation, semantic rule, or tenantLabel rule", backendName)
+		return fmt.Errorf("backend '%s' queryRewrite requires at least one operation or semantic rule", backendName)
 	}
 
 	for i, operation := range cfg.Operations {
@@ -106,13 +92,6 @@ func Validate(backendName string, cfg *RewriteConfig) error {
 	for i, rule := range cfg.Semantics {
 		prefix := fmt.Sprintf("backend '%s' queryRewrite semantic rule %d", backendName, i+1)
 		if err := validateSemanticRule(prefix, rule); err != nil {
-			return err
-		}
-	}
-
-	if cfg.TenantLabel != nil {
-		prefix := fmt.Sprintf("backend '%s' queryRewrite tenantLabel", backendName)
-		if err := validateTenantLabel(prefix, *cfg.TenantLabel); err != nil {
 			return err
 		}
 	}
@@ -239,7 +218,7 @@ func newRenderer(ctx Context) renderer {
 	return renderer{
 		replacements: strings.NewReplacer(
 			"{{backend}}", strings.TrimSpace(ctx.Backend),
-			"{{namespace}}", strings.TrimSpace(ctx.Namespace),
+			"{{tenant}}", strings.TrimSpace(ctx.Tenant),
 			"{{host}}", strings.TrimSpace(ctx.Host),
 			"{{route}}", normalizeRoute(ctx.Route),
 			"{{method}}", strings.TrimSpace(ctx.Method),
@@ -310,11 +289,7 @@ func semanticRulesForConfig(cfg *RewriteConfig) []SemanticRule {
 		return nil
 	}
 
-	rules := append([]SemanticRule(nil), cfg.Semantics...)
-	if cfg.TenantLabel != nil {
-		rules = append(rules, cfg.TenantLabel.expand()...)
-	}
-	return rules
+	return append([]SemanticRule(nil), cfg.Semantics...)
 }
 
 func validateSemanticRule(prefix string, rule SemanticRule) error {
@@ -359,54 +334,6 @@ func validateSemanticRule(prefix string, rule SemanticRule) error {
 		return err
 	}
 	return nil
-}
-
-func validateTenantLabel(prefix string, rule TenantLabelRule) error {
-	mode := normalizedLowerTrim(rule.Mode)
-	switch mode {
-	case "", tenantLabelModeDefault:
-	default:
-		return fmt.Errorf("%s mode must be %s", prefix, tenantLabelModeDefault)
-	}
-
-	for i, semanticRule := range rule.expand() {
-		if err := validateSemanticRule(fmt.Sprintf("%s generated rule %d", prefix, i+1), semanticRule); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (r TenantLabelRule) expand() []SemanticRule {
-	name := strings.TrimSpace(r.Name)
-	if name == "" {
-		name = tenantLabelDefaultName
-	}
-
-	value := strings.TrimSpace(r.Value)
-	if value == "" {
-		value = tenantLabelDefaultValue
-	}
-
-	rules := make([]SemanticRule, 0, 2)
-	if params := normalizedOrDefault(r.PromQLParams, defaultPromQLParams); len(params) > 0 {
-		rules = append(rules, SemanticRule{
-			Language: semanticLanguagePromQL,
-			Params:   params,
-			Routes:   normalizedOrDefault(r.PromQLRoutes, defaultPromQLRoutes),
-			Require:  []MatcherRequirement{{Name: name, Value: value}},
-		})
-	}
-	if params := normalizedOrDefault(r.SelectorParams, defaultSelectorParams); len(params) > 0 {
-		rules = append(rules, SemanticRule{
-			Language: semanticLanguageSelector,
-			Params:   params,
-			Routes:   normalizedOrDefault(r.SelectorRoutes, defaultSelectorRoutes),
-			Require:  []MatcherRequirement{{Name: name, Value: value}},
-		})
-	}
-	return rules
 }
 
 func normalizedOrDefault(values []string, defaults []string) []string {

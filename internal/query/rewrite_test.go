@@ -72,13 +72,13 @@ func TestRewriteOperations(t *testing.T) {
 
 	rewritten := Rewrite(values, &RewriteConfig{Operations: []RewriteOperation{
 		{Action: "rename", Name: "query", To: "expr"},
-		{Action: "add", Name: "tenant", Value: "{{namespace}}"},
+		{Action: "add", Name: "tenant", Value: "{{tenant}}"},
 		{Action: "set", Name: "source", Value: "{{host}}/{{backend}}"},
 		{Action: "delete", Name: "debug"},
 	}}, Context{
-		Backend:   "mimir-shared",
-		Namespace: "utv",
-		Host:      "otlp.example.com",
+		Backend: "mimir-shared",
+		Tenant:  "utv",
+		Host:    "otlp.example.com",
 	})
 
 	if got := rewritten.Encode(); got != "expr=up&expr=rate&source=otlp.example.com%2Fmimir-shared&tenant=utv&tm_namespace=utv" {
@@ -92,7 +92,7 @@ func TestRewriteOperations(t *testing.T) {
 
 func TestRewriteNoConfigReturnsOriginalValues(t *testing.T) {
 	values := url.Values{"query": {"up"}}
-	rewritten := Rewrite(values, nil, Context{Namespace: "utv"})
+	rewritten := Rewrite(values, nil, Context{Tenant: "utv"})
 
 	if got := rewritten.Encode(); got != "query=up" {
 		t.Fatalf("expected values without queryRewrite config to be unchanged, got %q", got)
@@ -101,11 +101,11 @@ func TestRewriteNoConfigReturnsOriginalValues(t *testing.T) {
 
 func TestRewriteRendersTemplates(t *testing.T) {
 	rewritten := Rewrite(url.Values{}, &RewriteConfig{Operations: []RewriteOperation{
-		{Action: "add", Name: "source", Value: "{{host}}/{{backend}}/{{namespace}}"},
+		{Action: "add", Name: "source", Value: "{{host}}/{{backend}}/{{tenant}}"},
 	}}, Context{
-		Backend:   "tempo",
-		Namespace: "core-test.ops",
-		Host:      "otlp.example.com",
+		Backend: "tempo",
+		Tenant:  "core-test.ops",
+		Host:    "otlp.example.com",
 	})
 
 	if got := rewritten.Encode(); got != "source=otlp.example.com%2Ftempo%2Fcore-test.ops" {
@@ -125,7 +125,7 @@ func TestRewriteMatchesRoutes(t *testing.T) {
 }
 
 func TestRewritePromQLSemantics(t *testing.T) {
-	rewritten := mustRewriteWithError(t, url.Values{"query": {"sum(rate(http_requests_total[5m]))"}}, promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "{{namespace}}"}), Context{Namespace: "utv", Route: "/api/v1/query"})
+	rewritten := mustRewriteWithError(t, url.Values{"query": {"sum(rate(http_requests_total[5m]))"}}, promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "{{tenant}}"}), Context{Tenant: "utv", Route: "/api/v1/query"})
 
 	if got := rewritten.Get("query"); got != "sum(rate(http_requests_total{namespace=\"utv\"}[5m]))" {
 		t.Fatalf("expected semantic promql enforcement, got %q", got)
@@ -133,33 +133,10 @@ func TestRewritePromQLSemantics(t *testing.T) {
 }
 
 func TestRewriteSelectorSemantics(t *testing.T) {
-	rewritten := mustRewriteWithError(t, url.Values{"match[]": {"up"}}, selectorSemanticConfig(MatcherRequirement{Name: "namespace", Value: "{{namespace}}"}), Context{Namespace: "utv", Route: "/api/v1/series"})
+	rewritten := mustRewriteWithError(t, url.Values{"match[]": {"up"}}, selectorSemanticConfig(MatcherRequirement{Name: "namespace", Value: "{{tenant}}"}), Context{Tenant: "utv", Route: "/api/v1/series"})
 
 	if got := rewritten["match[]"][0]; got != "{__name__=\"up\",namespace=\"utv\"}" {
 		t.Fatalf("expected selector semantic enforcement, got %q", got)
-	}
-}
-
-func TestRewriteTenantLabelDefaults(t *testing.T) {
-	rewrittenQuery := mustRewriteWithError(t, url.Values{"query": {"up"}}, &RewriteConfig{TenantLabel: &TenantLabelRule{}}, Context{Namespace: "utv", Route: "/api/v1/query"})
-	if got := rewrittenQuery.Get("query"); got != "up{namespace=\"utv\"}" {
-		t.Fatalf("expected tenant label promql enforcement, got %q", got)
-	}
-
-	rewrittenSelector := mustRewriteWithError(t, url.Values{"match[]": {"up"}}, &RewriteConfig{TenantLabel: &TenantLabelRule{}}, Context{Namespace: "utv", Route: "/api/v1/labels"})
-	if got := rewrittenSelector.Get("match[]"); got != "{__name__=\"up\",namespace=\"utv\"}" {
-		t.Fatalf("expected tenant label selector enforcement, got %q", got)
-	}
-}
-
-func TestRewriteTenantLabelCustomName(t *testing.T) {
-	rewritten := mustRewriteWithError(t, url.Values{"query": {"up"}}, &RewriteConfig{TenantLabel: &TenantLabelRule{
-		Name:  "tenant",
-		Value: "{{backend}}/{{namespace}}",
-	}}, Context{Backend: "mimir-shared", Namespace: "utv", Route: "/api/v1/query"})
-
-	if got := rewritten.Get("query"); got != "up{tenant=\"mimir-shared/utv\"}" {
-		t.Fatalf("expected custom tenant label enforcement, got %q", got)
 	}
 }
 
@@ -214,7 +191,7 @@ func TestRewriteTraceQLSemanticConflict(t *testing.T) {
 }
 
 func TestRewritePromQLSemanticConflict(t *testing.T) {
-	_, err := RewriteWithError(url.Values{"query": {"up{namespace=\"prod\"}"}}, promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "utv"}), Context{Namespace: "utv", Route: "/api/v1/query"})
+	_, err := RewriteWithError(url.Values{"query": {"up{namespace=\"prod\"}"}}, promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "utv"}), Context{Tenant: "utv", Route: "/api/v1/query"})
 	if err == nil {
 		t.Fatal("expected semantic conflict error, got nil")
 	}
@@ -249,7 +226,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name: "semantic rule valid",
-			cfg:  promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "{{namespace}}"}),
+			cfg:  promQLSemanticConfig(MatcherRequirement{Name: "namespace", Value: "{{tenant}}"}),
 		},
 		{
 			name: "logql semantic rule valid",
@@ -277,17 +254,6 @@ func TestValidate(t *testing.T) {
 			}}},
 			wantErr: true,
 		},
-		{
-			name: "tenant label shorthand valid",
-			cfg:  &RewriteConfig{TenantLabel: &TenantLabelRule{}},
-		},
-		{
-			name: "tenant label shorthand rejects invalid mode",
-			cfg: &RewriteConfig{TenantLabel: &TenantLabelRule{
-				Mode: "rewrite",
-			}},
-			wantErr: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -303,13 +269,13 @@ func TestRewriteRequestFormBody(t *testing.T) {
 
 	rewritten, err := RewriteRequest(req, &RewriteConfig{Operations: []RewriteOperation{
 		{Action: "rename", Name: "query", To: "expr"},
-		{Action: "add", Name: "tenant", Value: "{{namespace}}"},
+		{Action: "add", Name: "tenant", Value: "{{tenant}}"},
 		{Action: "set", Name: "source", Value: "{{host}}/{{backend}}"},
 		{Action: "delete", Name: "debug"},
 	}}, Context{
-		Backend:   "mimir-shared",
-		Namespace: "utv",
-		Host:      "otlp.example.com",
+		Backend: "mimir-shared",
+		Tenant:  "utv",
+		Host:    "otlp.example.com",
 	})
 	if err != nil {
 		t.Fatalf("RewriteRequest returned error: %v", err)

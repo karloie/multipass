@@ -524,7 +524,7 @@ func (h *Handler) logAudit(ctx context.Context, userInfo *auth.UserInfo, role st
 		Timestamp:  time.Now().UTC(),
 		UserID:     requestUserID(userInfo),
 		Backend:    "pim",
-		Namespace:  role,
+		Tenant:     role,
 		StatusCode: statusCode,
 		Error:      errorMessage,
 	})

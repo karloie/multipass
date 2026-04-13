@@ -190,6 +190,11 @@ func traceQLRequirements(rule SemanticRule, ctx Context) ([]traceQLRequirement, 
 	renderer := newRenderer(ctx)
 	requirements := make([]traceQLRequirement, 0, len(rule.Require))
 	for _, requirement := range rule.Require {
+		// Check if condition is satisfied
+		if !evaluateCondition(requirement.Condition, ctx) {
+			continue
+		}
+
 		name := strings.TrimSpace(requirement.Name)
 		if name == "" {
 			continue
@@ -304,6 +309,11 @@ func buildRequiredMatchers(requirements []MatcherRequirement, ctx Context) ([]*p
 	renderer := newRenderer(ctx)
 	matchers := make([]*promlabels.Matcher, 0, len(requirements))
 	for _, requirement := range requirements {
+		// Check if condition is satisfied
+		if !evaluateCondition(requirement.Condition, ctx) {
+			continue
+		}
+
 		matchType, err := parseMatcherOperator(requirement.Operator)
 		if err != nil {
 			return nil, err
@@ -368,4 +378,61 @@ func matchersEqual(left, right *promlabels.Matcher) bool {
 		return left == right
 	}
 	return left.Name == right.Name && left.Type == right.Type && left.Value == right.Value
+}
+
+// evaluateCondition checks if a requirement condition is satisfied.
+// Supported conditions:
+//   - "" (empty): always true
+//   - "segment == dev": true if segment equals "dev"
+//   - "segment != admin": true if segment does not equal "admin"
+//   - "segment == ops|admin": true if segment equals "ops" or "admin"
+func evaluateCondition(condition string, ctx Context) bool {
+	trimmed := strings.TrimSpace(condition)
+	if trimmed == "" {
+		return true
+	}
+
+	// Parse condition: "segment == dev" or "segment != admin"
+	var operator string
+	var parts []string
+
+	if strings.Contains(trimmed, "==") {
+		operator = "=="
+		parts = strings.SplitN(trimmed, "==", 2)
+	} else if strings.Contains(trimmed, "!=") {
+		operator = "!="
+		parts = strings.SplitN(trimmed, "!=", 2)
+	} else {
+		return false
+	}
+
+	if len(parts) != 2 {
+		return false
+	}
+
+	variable := strings.TrimSpace(parts[0])
+	value := strings.TrimSpace(parts[1])
+
+	// Only "segment" variable is supported for now
+	if variable != "segment" {
+		return false
+	}
+
+	segmentValue := strings.TrimSpace(ctx.Segment)
+
+	switch operator {
+	case "==":
+		// Support multiple values separated by |
+		allowedValues := strings.Split(value, "|")
+		for _, allowed := range allowedValues {
+			if segmentValue == strings.TrimSpace(allowed) {
+				return true
+			}
+		}
+		return false
+	case "!=":
+		return segmentValue != value
+	default:
+		return false
+	}
 }

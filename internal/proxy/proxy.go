@@ -34,7 +34,7 @@ type contextKey string
 const (
 	userInfoKey    contextKey = "userInfo"
 	permissionsKey contextKey = "permissions"
-	namespaceKey   contextKey = "namespace"
+	tenantKey      contextKey = "tenant"
 	jwtTokenKey    contextKey = "jwtToken"
 )
 
@@ -54,8 +54,8 @@ const (
 	errMsgInvalidToken     = "Invalid token"
 	errMsgBackendNotFound  = "Backend not found"
 	errMsgAuthzFailed      = "Authorization check failed"
-	errMsgAccessDenied     = "Access denied: no permission for namespace '%s'"
-	errMsgNamespaceMissing = "Missing namespace routing parameter '%s'"
+	errMsgAccessDenied     = "Access denied: no permission for tenant '%s'"
+	errMsgTenantMissing    = "Missing tenant routing parameter '%s'"
 	errMsgTempoTraceHidden = "Trace not found"
 )
 
@@ -402,7 +402,7 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 
 	userInfo, _ := r.Context().Value(userInfoKey).(*auth.UserInfo)
 
-	namespace, err := resolveRequestNamespace(p.config.Authz, resolved.config, userInfo, r)
+	tenant, err := resolveRequestTenant(p.config.Authz, resolved.config, userInfo, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -415,7 +415,7 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 				slog.String("user", userInfo.ID),
 				slog.Any("error", err),
 			)
-			p.logAudit(r.Context(), userInfo, resolved.name, namespace, start, http.StatusInternalServerError, err.Error(), perms)
+			p.logAudit(r.Context(), userInfo, resolved.name, tenant, start, http.StatusInternalServerError, err.Error(), perms)
 			http.Error(w, errMsgAuthzFailed, http.StatusInternalServerError)
 			return
 		}
@@ -432,7 +432,7 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 						slog.String("team_id", requestTeamID),
 						slog.String("reason", teamDecision.Reason),
 					)
-					p.logAudit(r.Context(), userInfo, resolved.name, namespace, start, http.StatusForbidden, "access denied to team", perms)
+					p.logAudit(r.Context(), userInfo, resolved.name, tenant, start, http.StatusForbidden, "access denied to team", perms)
 					http.Error(w, fmt.Sprintf("Access denied: no permission for team '%s'", requestTeamID), http.StatusForbidden)
 					return
 				}
@@ -443,13 +443,13 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 		}
 	}
 
-	r = r.WithContext(context.WithValue(r.Context(), namespaceKey, namespace))
-	r, err = stripNamespaceRoutingQueryParam(r, resolved.config)
+	r = r.WithContext(context.WithValue(r.Context(), tenantKey, tenant))
+	r, err = stripTenantRoutingQueryParam(r, resolved.config)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	r, err = p.rewriteBackendQuery(r, resolved, namespace)
+	r, err = p.rewriteBackendQuery(r, resolved, tenant)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -472,7 +472,7 @@ func (p *Proxy) handleBackendRequest(w http.ResponseWriter, r *http.Request, res
 
 	if p.auditStore != nil && userInfo != nil {
 		perms, _ := r.Context().Value(permissionsKey).(*authz.Permission)
-		p.logAudit(r.Context(), userInfo, resolved.name, namespace, start, recorder.statusCode, "", perms)
+		p.logAudit(r.Context(), userInfo, resolved.name, tenant, start, recorder.statusCode, "", perms)
 	}
 }
 
@@ -500,32 +500,30 @@ func resolveRequestTeamID(r *http.Request, cfg config.TeamAccessConfig) string {
 	return ""
 }
 
-// buildSegmentFilteringConfig creates a queryRewrite config that includes segment-based namespace filtering
-// for dev users. Returns the original config if segment is ops/admin or no filtering needed.
+// buildSegmentFilteringConfig creates a queryRewrite config that injects segment labels
+// to enforce segment-based access control. Returns the original config if segment is admin or if segment classification is not configured.
 func buildSegmentFilteringConfig(p *Proxy, baseConfig *queryrewrite.RewriteConfig, segment string, cluster string) *queryrewrite.RewriteConfig {
-	// Only apply filtering for dev segment
-	if segment != segmentDev {
+	// Admin sees all segments - no filtering
+	if segment == segmentAdmin {
 		return baseConfig
 	}
 
-	// Get ops namespace exclusion pattern
-	exclusionPattern := p.config.Authz.NamespaceClassifier.OpsNamespaceExclusionPattern(cluster)
-	if exclusionPattern == "" {
-		// No ops namespaces configured, no filtering needed
+	// Only apply segment filtering if segment classification is configured
+	if !p.config.Authz.SegmentClassifier.HasRules() {
 		return baseConfig
 	}
 
-	// Build semantic rules for dev segment filtering
-	devFilteringRules := []queryrewrite.SemanticRule{
+	// Dev and ops users get segment label injected
+	segmentFilteringRules := []queryrewrite.SemanticRule{
 		{
 			Language: "promql",
 			Params:   []string{"query"},
 			Routes:   []string{"/api/v1/query", "/api/v1/query_range", "/api/v1/series"},
 			Require: []queryrewrite.MatcherRequirement{
 				{
-					Name:     "namespace",
-					Operator: "!~",
-					Value:    exclusionPattern,
+					Name:     "segment",
+					Operator: "=",
+					Value:    segment,
 				},
 			},
 		},
@@ -535,9 +533,9 @@ func buildSegmentFilteringConfig(p *Proxy, baseConfig *queryrewrite.RewriteConfi
 			Routes:   []string{"/api/v1/series", "/api/v1/labels", "/api/v1/label/*"},
 			Require: []queryrewrite.MatcherRequirement{
 				{
-					Name:     "namespace",
-					Operator: "!~",
-					Value:    exclusionPattern,
+					Name:     "segment",
+					Operator: "=",
+					Value:    segment,
 				},
 			},
 		},
@@ -547,9 +545,9 @@ func buildSegmentFilteringConfig(p *Proxy, baseConfig *queryrewrite.RewriteConfi
 			Routes:   []string{"/loki/api/v1/query", "/loki/api/v1/query_range", "/loki/api/v1/series"},
 			Require: []queryrewrite.MatcherRequirement{
 				{
-					Name:     "namespace",
-					Operator: "!~",
-					Value:    exclusionPattern,
+					Name:     "segment",
+					Operator: "=",
+					Value:    segment,
 				},
 			},
 		},
@@ -559,9 +557,9 @@ func buildSegmentFilteringConfig(p *Proxy, baseConfig *queryrewrite.RewriteConfi
 			Routes:   []string{"/api/search", "/api/traces/*"},
 			Require: []queryrewrite.MatcherRequirement{
 				{
-					Name:     "resource.namespace",
-					Operator: "!=",
-					Value:    exclusionPattern,
+					Name:     "resource.segment",
+					Operator: "=",
+					Value:    segment,
 				},
 			},
 		},
@@ -570,34 +568,36 @@ func buildSegmentFilteringConfig(p *Proxy, baseConfig *queryrewrite.RewriteConfi
 	// If no base config, use only segment filtering
 	if baseConfig == nil {
 		return &queryrewrite.RewriteConfig{
-			Semantics: devFilteringRules,
+			Semantics: segmentFilteringRules,
 		}
 	}
 
 	// Clone and augment base config
 	augmented := &queryrewrite.RewriteConfig{
-		Operations:  append([]queryrewrite.RewriteOperation(nil), baseConfig.Operations...),
-		Semantics:   append([]queryrewrite.SemanticRule(nil), baseConfig.Semantics...),
-		TenantLabel: baseConfig.TenantLabel,
+		Operations: append([]queryrewrite.RewriteOperation(nil), baseConfig.Operations...),
+		Semantics:  append([]queryrewrite.SemanticRule(nil), baseConfig.Semantics...),
 	}
 
 	// Append segment filtering rules
-	augmented.Semantics = append(augmented.Semantics, devFilteringRules...)
+	augmented.Semantics = append(augmented.Semantics, segmentFilteringRules...)
 
 	return augmented
 }
 
-func (p *Proxy) rewriteBackendQuery(r *http.Request, resolved resolvedBackend, namespace string) (*http.Request, error) {
-	// Determine segment for filtering
+func (p *Proxy) rewriteBackendQuery(r *http.Request, resolved resolvedBackend, tenant string) (*http.Request, error) {
+	// Determine segment for filtering (independent of tenant)
 	segment := resolveSegment(r)
 
-	// Determine cluster for namespace classification
+	// Determine cluster for segment classification
 	cluster := ""
 	if userInfo, ok := r.Context().Value(userInfoKey).(*auth.UserInfo); ok && userInfo != nil {
 		cluster = p.config.Authz.ClusterResolver.ResolveCluster(userInfo)
 	}
 
 	// Build config with segment filtering
+	// Segment filtering is for query rewriting (namespace matchers)
+	// Tenant is for multi-tenant backend isolation (X-Scope-OrgID)
+	// These are completely independent concepts
 	effectiveConfig := buildSegmentFilteringConfig(p, resolved.config.QueryRewrite, segment, cluster)
 
 	if r == nil || !queryrewrite.HasRules(effectiveConfig) {
@@ -613,30 +613,92 @@ func (p *Proxy) rewriteBackendQuery(r *http.Request, resolved resolvedBackend, n
 	}
 
 	return queryrewrite.RewriteRequest(r, effectiveConfig, queryrewrite.Context{
-		Backend:   resolved.name,
-		Namespace: namespace,
-		Host:      r.Host,
-		Route:     route,
-		Method:    r.Method,
-		Segment:   segment,
+		Backend: resolved.name,
+		Tenant:  tenant,
+		Host:    r.Host,
+		Route:   route,
+		Method:  r.Method,
+		Segment: segment,
 	})
 }
 
-func resolveRequestNamespace(authzConfig config.AuthzConfig, backendConfig config.BackendConfig, userInfo *auth.UserInfo, r *http.Request) (string, error) {
-	// Simplified: use backend.namespace if set, otherwise backend is single-tenant (no namespace)
-	if namespace := strings.TrimSpace(backendConfig.Namespace); namespace != "" {
-		return namespace, nil
+func resolveRequestTenant(authzConfig config.AuthzConfig, backendConfig config.BackendConfig, userInfo *auth.UserInfo, r *http.Request) (string, error) {
+	// Request-based tenant routing
+	if backendConfig.TenantRouting != nil && backendConfig.TenantRouting.Mode == "request" {
+		param := backendConfig.TenantRouting.Parameter
+		if param == "" {
+			param = "tenant"
+		}
+
+		source := backendConfig.TenantRouting.Source
+		if source == "" {
+			source = "query"
+		}
+
+		var rawTenant string
+		switch source {
+		case "query":
+			rawTenant = r.URL.Query().Get(param)
+		case "body":
+			if r.PostForm != nil {
+				rawTenant = r.PostForm.Get(param)
+			}
+		case "both":
+			rawTenant = r.URL.Query().Get(param)
+			if rawTenant == "" && r.PostForm != nil {
+				rawTenant = r.PostForm.Get(param)
+			}
+		}
+
+		rawTenant = strings.TrimSpace(rawTenant)
+		if rawTenant != "" {
+			return rawTenant, nil
+		}
 	}
-	return "", nil
+
+	// Fixed tenant takes precedence
+	if tenant := strings.TrimSpace(backendConfig.Tenant); tenant != "" {
+		return tenant, nil
+	}
+
+	// No tenant configured - use default
+	return "default", nil
 }
 
-func stripNamespaceRoutingQueryParam(r *http.Request, backendConfig config.BackendConfig) (*http.Request, error) {
-	// No-op: namespace routing removed for simplicity
+func stripTenantRoutingQueryParam(r *http.Request, backendConfig config.BackendConfig) (*http.Request, error) {
+	// Only strip if using request-based routing
+	if backendConfig.TenantRouting == nil || backendConfig.TenantRouting.Mode != "request" {
+		return r, nil
+	}
+
+	param := backendConfig.TenantRouting.Parameter
+	if param == "" {
+		param = "tenant"
+	}
+
+	source := backendConfig.TenantRouting.Source
+	if source == "" {
+		source = "query"
+	}
+
+	// Strip from query if needed
+	if source == "query" || source == "both" {
+		query := r.URL.Query()
+		if query.Has(param) {
+			query.Del(param)
+			cloned := r.Clone(r.Context())
+			cloned.URL = &url.URL{}
+			*cloned.URL = *r.URL
+			cloned.URL.RawQuery = query.Encode()
+			return cloned, nil
+		}
+	}
+
 	return r, nil
 }
 
 // logAudit records an audit event.
-func (p *Proxy) logAudit(ctx context.Context, userInfo *auth.UserInfo, backend, namespace string, start time.Time, statusCode int, errorMsg string, perms *authz.Permission) {
+func (p *Proxy) logAudit(ctx context.Context, userInfo *auth.UserInfo, backend, tenant string, start time.Time, statusCode int, errorMsg string, perms *authz.Permission) {
 	if p.auditStore == nil || userInfo == nil {
 		return
 	}
@@ -645,7 +707,7 @@ func (p *Proxy) logAudit(ctx context.Context, userInfo *auth.UserInfo, backend, 
 		Timestamp:  start,
 		UserID:     userInfo.ID,
 		Backend:    backend,
-		Namespace:  namespace,
+		Tenant:     tenant,
 		StatusCode: statusCode,
 		Error:      errorMsg,
 	}
@@ -661,7 +723,7 @@ func (p *Proxy) logAudit(ctx context.Context, userInfo *auth.UserInfo, backend, 
 	slog.InfoContext(ctx, "audit",
 		slog.String("user", event.UserID),
 		slog.String("backend", event.Backend),
-		slog.String("namespace", event.Namespace),
+		slog.String("tenant", event.Tenant),
 		slog.Int("status", event.StatusCode),
 		slog.Bool("elevated_access_active", event.ElevatedAccessActive),
 		slog.String("elevated_role", emptyAuditValue(event.ElevatedRole)),

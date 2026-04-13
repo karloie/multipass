@@ -134,7 +134,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode: "caller",
 				},
 			},
@@ -145,7 +145,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode: "caller",
 				},
 			},
@@ -161,7 +161,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode: "request",
 				},
 			},
@@ -170,10 +170,10 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 		{
 			name: "request routing namespace prefix requires classifier",
 			backend: BackendConfig{
-				Type:      "prometheus",
-				Endpoint:  "http://example",
-				Namespace: "core-test",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				Tenant:   "core-test",
+				TenantRouting: &TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 				},
@@ -183,16 +183,16 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 		{
 			name: "request routing allows cluster prefix with classifier",
 			backend: BackendConfig{
-				Type:      "prometheus",
-				Endpoint:  "http://example",
-				Namespace: "core-test",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				Tenant:   "core-test",
+				TenantRouting: &TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 				},
 			},
 			authz: AuthzConfig{
-				NamespaceClassifier: NamespaceClassifierConfig{DefaultSegment: "dev"},
+				SegmentClassifier: SegmentClassifierConfig{DefaultSegment: "dev"},
 			},
 		},
 		{
@@ -200,7 +200,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode: "fixed",
 				},
 			},
@@ -211,7 +211,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 				},
@@ -222,7 +222,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 					Source:    "query",
@@ -234,7 +234,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 					Source:    "body",
@@ -246,7 +246,7 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 			backend: BackendConfig{
 				Type:     "prometheus",
 				Endpoint: "http://example",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				TenantRouting: &TenantRoutingConfig{
 					Mode:      "request",
 					Parameter: "tm_namespace",
 					Source:    "header",
@@ -257,10 +257,10 @@ func TestConfigValidateNamespaceRouting(t *testing.T) {
 		{
 			name: "fixed routing valid",
 			backend: BackendConfig{
-				Type:      "prometheus",
-				Endpoint:  "http://example",
-				Namespace: "monitoring",
-				NamespaceRouting: &NamespaceRoutingConfig{
+				Type:     "prometheus",
+				Endpoint: "http://example",
+				Tenant:   "monitoring",
+				TenantRouting: &TenantRoutingConfig{
 					Mode: "fixed",
 				},
 			},
@@ -410,8 +410,8 @@ func TestConfigValidateAuthzRoleMappings(t *testing.T) {
 	}
 }
 
-func TestNamespaceClassifierClassify(t *testing.T) {
-	classifier := NamespaceClassifierConfig{
+func TestSegmentClassifierClassify(t *testing.T) {
+	classifier := SegmentClassifierConfig{
 		DefaultSegment: "dev",
 		OpsExact:       []string{"monitoring"},
 		OpsPrefixes:    []string{"kube-"},
@@ -566,15 +566,6 @@ func TestConfigValidateQueryRewrite(t *testing.T) {
 				Params:   []string{"query"},
 				Require:  []queryrewrite.MatcherRequirement{{Name: "namespace", Value: "{{namespace}}"}},
 			}}}),
-			wantErr: true,
-		},
-		{
-			name:    "query rewrite tenant label shorthand valid",
-			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{TenantLabel: &queryrewrite.TenantLabelRule{Name: "namespace"}}),
-		},
-		{
-			name:    "query rewrite tenant label shorthand rejects invalid mode",
-			backend: newBackendWithQueryRewrite(&queryrewrite.RewriteConfig{TenantLabel: &queryrewrite.TenantLabelRule{Mode: "rewrite"}}),
 			wantErr: true,
 		},
 	}

@@ -40,7 +40,7 @@ auth:
       - profile
       - email
   
-# Map user groups to allowed namespaces
+# Map user groups to allowed tenants
 authz:
   enabled: false  # Set to true to enforce namespace access control
   provider: token
@@ -64,12 +64,12 @@ authz:
   # provider: token
 
   # With a normal OIDC setup, `token` is enough: validated
-  # token groups become the source of namespace authorization.
+  # token groups become the source of tenant authorization.
 
-  # Internal role/group -> Namespace mappings
+  # Internal role/group -> Tenant mappings
   groupMappings:
     admin:
-      - "*"  # Access all namespaces
+      - "*"  # Access all tenants
     devops:
       - prod
       - ops
@@ -80,7 +80,7 @@ authz:
       - default
 
   # Example rollout for namespace-scoped observability access.
-  # Use fixed backend aliases together with matching namespace grants so
+  # Use fixed backend aliases together with matching tenant grants so
   # Grafana datasources can point at Multipass and Multipass becomes the
   # authoritative gate for reads.
   # groupMappings:
@@ -153,11 +153,11 @@ audit:
 # declares distinct externalPathPrefixes.
 backends:
   # Prometheus stack
-  # Type: prometheus - automatically injects X-Scope-OrgID header with namespace
+  # Type: prometheus - automatically injects X-Scope-OrgID header with tenant
   loki:
     type: prometheus
     endpoint: http://loki.monitoring.svc.cluster.local:3100
-    # namespace: monitoring  # Optional fixed namespace; ignores caller-supplied ?namespace=
+    # tenant: monitoring  # Optional fixed tenant; ignores caller-supplied ?tenant=
     # readinessUrl: http://loki.monitoring.svc.cluster.local:3100/ready
     # Optional static headers (X-Scope-OrgID will be added dynamically)
     # headers:
@@ -166,15 +166,15 @@ backends:
   mimir:
     type: prometheus
     endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
-    # namespace: monitoring
-    # namespaceRouting:
+    # tenant: monitoring
+    # tenantRouting:
     #   mode: request
     #   parameter: tm_namespace
   
   tempo:
     type: prometheus
     endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
-    # namespace: monitoring
+    # tenant: monitoring
 
   # Shared OTLP host example.
   # Requests for https://otlp.example.com/otlp/v1/metrics go to mimir-otlp.
@@ -203,12 +203,12 @@ backends:
 
   # Phase 1 single-backend routing example.
   # Multipass reads tm_namespace from the request, authorizes it against the
-  # caller's allowed namespaces, strips the parameter before proxying, and
-  # forwards the request with X-Scope-OrgID set to that namespace.
+  # caller's allowed tenants, strips the parameter before proxying, and
+  # forwards the request with X-Scope-OrgID set to that tenant.
   # mimir-shared:
   #   type: prometheus
   #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
-  #   namespaceRouting:
+  #   tenantRouting:
   #     mode: request
   #     parameter: tm_namespace
   #     source: both
@@ -260,8 +260,8 @@ backends:
   # mimir-core-test:
   #   type: prometheus
   #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
-  #   namespace: core-test
-  #   namespaceRouting:
+  #   tenant: core-test
+  #   tenantRouting:
   #     mode: request
   #     parameter: tm_namespace
   #     source: both
@@ -276,56 +276,56 @@ backends:
   #   externalHost: otlp.example.com
   #   externalPathPrefixes:
   #     - /otlp/v1/metrics
-  #   namespaceRouting:
+  #   tenantRouting:
   #     mode: caller
 
   # Example fixed-namespace aliases for a first rollout.
-  # Each alias is bound to one namespace. Caller-supplied ?namespace=
+  # Each alias is bound to one tenant. Caller-supplied ?namespace=
   # values are ignored for these routes.
   # loki-utv:
   #   type: prometheus
   #   endpoint: http://loki.monitoring.svc.cluster.local:3100
-  #   namespace: utv
+  #   tenant: utv
   #
   # loki-monitoring:
   #   type: prometheus
   #   endpoint: http://loki.monitoring.svc.cluster.local:3100
-  #   namespace: monitoring
+  #   tenant: monitoring
   #
   # loki-applikasjonsplattform:
   #   type: prometheus
   #   endpoint: http://loki.monitoring.svc.cluster.local:3100
-  #   namespace: applikasjonsplattform
+  #   tenant: applikasjonsplattform
   #
   # mimir-utv:
   #   type: prometheus
   #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
-  #   namespace: utv
+  #   tenant: utv
   #
   # mimir-monitoring:
   #   type: prometheus
   #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
-  #   namespace: monitoring
+  #   tenant: monitoring
   #
   # mimir-applikasjonsplattform:
   #   type: prometheus
   #   endpoint: http://mimir-distributor.monitoring.svc.cluster.local:8080
-  #   namespace: applikasjonsplattform
+  #   tenant: applikasjonsplattform
   #
   # tempo-utv:
   #   type: prometheus
   #   endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
-  #   namespace: utv
+  #   tenant: utv
   #
   # tempo-monitoring:
   #   type: prometheus
   #   endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
-  #   namespace: monitoring
+  #   tenant: monitoring
   #
   # tempo-applikasjonsplattform:
   #   type: prometheus
   #   endpoint: http://tempo-distributor.monitoring.svc.cluster.local:3100
-  #   namespace: applikasjonsplattform
+  #   tenant: applikasjonsplattform
   
   grafana:
     type: prometheus

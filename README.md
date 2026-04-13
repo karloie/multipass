@@ -19,7 +19,7 @@ It runs in two modes:
 1. **web** for browser-based tools and dashboards.
 2. **api** for programmatic systems that expect tokens or trusted headers.
 
-Single sign-on. Namespace isolation. Full audit trail. Zero backend changes.
+Single sign-on. Tenant isolation. Full audit trail. Zero backend changes.
 
 ## Why Multipass?
 
@@ -38,7 +38,7 @@ Authorization is designed in two layers:
 
 - External IdP groups or roles come from the validated JWT unchanged
 - Multipass maps those external values to internal roles such as `admin`, `devops`, `dev`, and `man`
-- Namespace access and temporary PIM approvals use the internal roles
+- Tenant access and temporary PIM approvals use the internal roles
 
 ### Supported Applications
 
